@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>個人設定 – AgentHub</title>
+<style>
+  :root {
+    --bg:#0f0f13; --surface:#1a1a24; --border:#2e2e42;
+    --accent:#6c63ff; --text:#e8e8f0; --muted:#888;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;min-height:100dvh;padding:24px}
+  .wrap{max-width:640px;margin:0 auto}
+  h1{font-size:1.4rem;margin-bottom:6px}
+  .sub{color:var(--muted);font-size:.88rem;margin-bottom:20px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:16px}
+  .card h2{font-size:1rem;margin-bottom:14px}
+  label{display:block;font-size:.85rem;color:var(--muted);margin:10px 0 4px}
+  input,select,textarea{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;font-size:.92rem;font-family:inherit}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  textarea{resize:vertical;min-height:80px}
+  .row{display:flex;gap:10px}
+  .row > *{flex:1}
+  .checkbox-row{display:flex;align-items:center;gap:8px;margin-top:12px}
+  .checkbox-row input{width:auto}
+  button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 18px;font-size:.92rem;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;border:1px solid var(--border);color:var(--text)}
+  button.danger{background:#a23e3e}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .toolbar{display:flex;gap:10px;justify-content:space-between;align-items:center;margin-top:8px}
+  .msg{padding:10px;border-radius:8px;margin-bottom:12px;font-size:.88rem}
+  .msg.ok{background:#1d3a1d;color:#9be29b}
+  .msg.err{background:#3a1d1d;color:#e29b9b}
+  .top-bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+  .top-bar a{color:var(--muted);text-decoration:none;font-size:.85rem}
+  .top-bar a:hover{color:var(--accent)}
+  .auth-tabs{display:flex;gap:6px;margin-bottom:14px}
+  .auth-tabs button{flex:1;background:transparent;border:1px solid var(--border);color:var(--muted)}
+  .auth-tabs button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .userinfo{font-size:.85rem;color:var(--muted)}
+  .userinfo strong{color:var(--text)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top-bar">
+    <a href="/agenthub/static/index.html">← 回首頁</a>
+    <div>
+      <a href="/agenthub/static/memory.html" style="color:var(--accent);margin-right:14px">🧠 我的記憶</a>
+      <span id="auth-status" class="userinfo"></span>
+    </div>
+  </div>
+
+  <h1>個人設定</h1>
+  <p class="sub">這裡的資料會作為「使用者畫像」注入給所有你互動的 agent,讓它們的回覆更貼近你。</p>
+
+  <div id="msg-area"></div>
+
+  <!-- 未登入:登入/註冊面板 -->
+  <div id="auth-card" class="card" style="display:none">
+    <h2>登入或註冊</h2>
+    <div class="auth-tabs">
+      <button id="tab-login" class="active" onclick="switchTab('login')">登入</button>
+      <button id="tab-reg" onclick="switchTab('reg')">註冊</button>
+    </div>
+
+    <div id="form-login">
+      <label>Email</label>
+      <input id="li-email" type="email" autocomplete="email">
+      <label>密碼</label>
+      <input id="li-pw" type="password" autocomplete="current-password">
+      <div class="toolbar"><span></span><button onclick="doLogin()">登入</button></div>
+    </div>
+
+    <div id="form-reg" style="display:none">
+      <label>使用者名稱</label>
+      <input id="rg-name" maxlength="40">
+      <label>Email</label>
+      <input id="rg-email" type="email">
+      <label>密碼(至少 6 字)</label>
+      <input id="rg-pw" type="password">
+      <div class="toolbar"><span></span><button onclick="doRegister()">註冊</button></div>
+    </div>
+  </div>
+
+  <!-- 已登入:profile 表單 -->
+  <div id="profile-card" class="card" style="display:none">
+    <h2>基本資料</h2>
+    <label>稱呼(agent 該怎麼叫你)</label>
+    <input id="p-name" maxlength="80" placeholder="例如:小明">
+    <div class="row">
+      <div>
+        <label>偏好回覆語言</label>
+        <input id="p-lang" maxlength="20" placeholder="zh-TW / en / ja...">
+      </div>
+      <div>
+        <label>時區</label>
+        <input id="p-tz" maxlength="40" placeholder="Asia/Taipei">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>回覆風格</label>
+        <select id="p-style">
+          <option value="">(不指定)</option>
+          <option value="concise">簡潔</option>
+          <option value="detailed">詳細</option>
+        </select>
+      </div>
+      <div>
+        <label>語氣</label>
+        <select id="p-tone">
+          <option value="">(不指定)</option>
+          <option value="formal">正式</option>
+          <option value="casual">輕鬆</option>
+        </select>
+      </div>
+    </div>
+    <label>使用 emoji?</label>
+    <select id="p-emoji">
+      <option value="-1">(不指定)</option>
+      <option value="1">是</option>
+      <option value="0">否</option>
+    </select>
+
+    <label>興趣標籤(逗號分隔)</label>
+    <input id="p-interests" placeholder="Python, 登山, 貓">
+
+    <label>自訂指示(類似 ChatGPT 的「自訂指令」,會直接告訴 agent)</label>
+    <textarea id="p-custom" maxlength="2000" placeholder="例如:回答時請用台語;不要用學術術語"></textarea>
+
+    <div class="checkbox-row">
+      <input id="p-share" type="checkbox" checked>
+      <label for="p-share" style="margin:0;color:var(--text)">允許將以上資料分享給 agent(關閉後 agent 將完全看不到你的個人設定)</label>
+    </div>
+
+    <div class="toolbar" style="margin-top:18px">
+      <div>
+        <button class="ghost danger" onclick="clearProfile()">清空我的資料</button>
+        <button class="ghost" onclick="logout()">登出</button>
+      </div>
+      <button id="save-btn" onclick="saveProfile()">儲存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const JWT_KEY = 'agenthub_token';
+const USER_KEY = 'agenthub_user';
+function getJwt(){return localStorage.getItem(JWT_KEY)}
+function setAuth(token,user){localStorage.setItem(JWT_KEY,token);if(user)localStorage.setItem(USER_KEY,JSON.stringify(user))}
+function clearAuth(){localStorage.removeItem(JWT_KEY);localStorage.removeItem(USER_KEY)}
+function authHeader(){const t=getJwt();return t?{Authorization:'Bearer '+t}:{}}
+
+function showMsg(text,type='ok'){
+  const el=document.getElementById('msg-area');
+  el.innerHTML=`<div class="msg ${type}">${escape(text)}</div>`;
+  setTimeout(()=>{el.innerHTML=''},3500);
+}
+function escape(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+function switchTab(t){
+  document.getElementById('tab-login').classList.toggle('active',t==='login');
+  document.getElementById('tab-reg').classList.toggle('active',t==='reg');
+  document.getElementById('form-login').style.display=t==='login'?'':'none';
+  document.getElementById('form-reg').style.display=t==='reg'?'':'none';
+}
+
+async function doLogin(){
+  const email=document.getElementById('li-email').value.trim();
+  const password=document.getElementById('li-pw').value;
+  if(!email||!password)return showMsg('請填 email 與密碼','err');
+  try{
+    const r=await fetch('/agenthub/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
+    if(!r.ok)throw new Error((await r.json()).detail||'登入失敗');
+    const data=await r.json();
+    setAuth(data.access_token);
+    await afterLogin();
+  }catch(e){showMsg(e.message,'err')}
+}
+async function doRegister(){
+  const username=document.getElementById('rg-name').value.trim();
+  const email=document.getElementById('rg-email').value.trim();
+  const password=document.getElementById('rg-pw').value;
+  if(!username||!email||password.length<6)return showMsg('請完整填寫(密碼至少 6 字)','err');
+  try{
+    const r=await fetch('/agenthub/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,email,password})});
+    if(!r.ok)throw new Error((await r.json()).detail||'註冊失敗');
+    const data=await r.json();
+    setAuth(data.access_token);
+    await afterLogin();
+  }catch(e){showMsg(e.message,'err')}
+}
+function logout(){clearAuth();location.reload()}
+
+async function afterLogin(){
+  // 取得 user info
+  try{
+    const r=await fetch('/agenthub/auth/me',{headers:authHeader()});
+    if(r.ok){const u=await r.json();localStorage.setItem(USER_KEY,JSON.stringify(u))}
+  }catch{}
+  await loadProfile();
+}
+
+async function loadProfile(){
+  if(!getJwt()){
+    document.getElementById('auth-card').style.display='';
+    document.getElementById('profile-card').style.display='none';
+    document.getElementById('auth-status').innerHTML='未登入';
+    return;
+  }
+  document.getElementById('auth-card').style.display='none';
+  document.getElementById('profile-card').style.display='';
+
+  const u=JSON.parse(localStorage.getItem(USER_KEY)||'null');
+  document.getElementById('auth-status').innerHTML=u?`已登入:<strong>${escape(u.username)}</strong>`:'已登入';
+
+  try{
+    const r=await fetch('/agenthub/api/profile',{headers:authHeader()});
+    if(r.status===401){clearAuth();return loadProfile()}
+    if(!r.ok)throw new Error('載入失敗');
+    const p=await r.json();
+    document.getElementById('p-name').value=p.display_name||'';
+    document.getElementById('p-lang').value=p.language||'';
+    document.getElementById('p-tz').value=p.timezone||'';
+    document.getElementById('p-style').value=p.reply_style||'';
+    document.getElementById('p-tone').value=p.tone||'';
+    document.getElementById('p-emoji').value=String(p.use_emoji??-1);
+    document.getElementById('p-interests').value=(p.interests||[]).join(', ');
+    document.getElementById('p-custom').value=p.custom_instructions||'';
+    document.getElementById('p-share').checked=!!p.share_with_agents;
+  }catch(e){showMsg(e.message,'err')}
+}
+
+async function saveProfile(){
+  const interests=document.getElementById('p-interests').value
+    .split(',').map(s=>s.trim()).filter(Boolean);
+  const body={
+    display_name:document.getElementById('p-name').value.trim(),
+    language:document.getElementById('p-lang').value.trim(),
+    timezone:document.getElementById('p-tz').value.trim(),
+    reply_style:document.getElementById('p-style').value,
+    tone:document.getElementById('p-tone').value,
+    use_emoji:parseInt(document.getElementById('p-emoji').value,10),
+    interests,
+    custom_instructions:document.getElementById('p-custom').value,
+    share_with_agents:document.getElementById('p-share').checked,
+  };
+  const btn=document.getElementById('save-btn');btn.disabled=true;
+  try{
+    const r=await fetch('/agenthub/api/profile',{method:'PUT',headers:{'Content-Type':'application/json',...authHeader()},body:JSON.stringify(body)});
+    if(!r.ok)throw new Error((await r.json()).detail||'儲存失敗');
+    showMsg('已儲存,新對話會使用更新後的設定。');
+  }catch(e){showMsg(e.message,'err')}
+  finally{btn.disabled=false}
+}
+
+async function clearProfile(){
+  if(!confirm('確定要清空所有個人資料?'))return;
+  try{
+    const r=await fetch('/agenthub/api/profile',{method:'DELETE',headers:authHeader()});
+    if(!r.ok&&r.status!==204)throw new Error('清除失敗');
+    showMsg('已清空。');
+    await loadProfile();
+  }catch(e){showMsg(e.message,'err')}
+}
+
+loadProfile();
+</script>
+</body>
+</html>

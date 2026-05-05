@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat</title>
+<style>
+  :root {
+    --bg: #0f0f13; --surface: #1a1a24; --border: #2e2e42;
+    --accent: #6c63ff; --accent2: #48d1cc;
+    --text: #e8e8f0; --muted: #888;
+    --user-bg: #2a2a40; --ai-bg: #1e1e2e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; display: flex; flex-direction: column; height: 100dvh; }
+
+  /* ── Header ── */
+  #header { background: var(--surface); border-bottom: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+  #cover-img { width: 100%; max-height: 200px; object-fit: contain; background: #0d1117; display: none; }
+  #header-inner { padding: 12px 20px; display: flex; align-items: center; gap: 12px; }
+  #agent-avatar { font-size: 1.8rem; flex-shrink: 0; }
+  #agent-avatar img { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; }
+  #agent-info .name { font-weight: 700; font-size: 1rem; }
+  #agent-info .desc { font-size: .8rem; color: var(--muted); }
+
+  /* ── Skills bar ── */
+  #skills-bar { display: none; padding: 8px 20px 10px; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+  #skills-bar::-webkit-scrollbar { display: none; }
+  .skill-chip { display: flex; align-items: center; gap: 5px; background: var(--bg); border: 1px solid var(--border); border-radius: 20px; padding: 5px 12px; font-size: .82rem; white-space: nowrap; cursor: pointer; transition: border-color .15s, background .15s; flex-shrink: 0; }
+  .skill-chip:hover { border-color: var(--accent); background: #1e1e2e; }
+  .skill-icon { font-size: 1rem; }
+
+  /* ── Messages ── */
+  #messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+
+  /* ── Welcome card ── */
+  #welcome-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; align-self: flex-start; max-width: 84%; }
+  #welcome-card .w-title { font-weight: 600; margin-bottom: 6px; }
+  #welcome-card .w-msg { font-size: .9rem; color: var(--muted); line-height: 1.55; white-space: pre-wrap; }
+
+  /* ── Suggested prompts ── */
+  #suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .sug-btn { background: var(--bg); border: 1px solid var(--accent); color: var(--accent); border-radius: 20px; padding: 5px 14px; font-size: .82rem; cursor: pointer; transition: background .15s; }
+  .sug-btn:hover { background: var(--accent); color: #fff; }
+
+  .msg { max-width: 72%; padding: 10px 14px; border-radius: 12px; font-size: .92rem; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { background: var(--user-bg); align-self: flex-end; border-bottom-right-radius: 2px; }
+  .msg.assistant { background: var(--ai-bg); align-self: flex-start; border-bottom-left-radius: 2px; border: 1px solid var(--border); }
+  .msg.assistant.streaming::after { content: '▋'; animation: blink .8s step-end infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ── Input area ── */
+  #input-area { padding: 12px 20px; background: var(--surface); border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+  #input-row { display: flex; gap: 10px; }
+  #user-input { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 10px 14px; font-size: .92rem; resize: none; outline: none; max-height: 140px; overflow-y: auto; font-family: inherit; }
+  #user-input:focus { border-color: var(--accent); }
+  #send-btn { background: var(--accent); color: #fff; border: none; border-radius: 10px; padding: 10px 18px; cursor: pointer; font-size: .92rem; font-weight: 600; transition: opacity .15s; align-self: flex-end; }
+  #send-btn:disabled { opacity: .5; cursor: not-allowed; }
+  #quick-prompts { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  #quick-prompts::-webkit-scrollbar { display: none; }
+  .quick-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 16px; padding: 4px 12px; font-size: .78rem; cursor: pointer; white-space: nowrap; transition: border-color .15s, color .15s; }
+  .quick-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  #loading { padding: 40px; text-align: center; color: var(--muted); }
+
+  /* ── Conversation sidebar ── */
+  #menu-btn { background: transparent; border: none; color: var(--text); font-size: 1.4rem; cursor: pointer; padding: 4px 8px; margin-right: 4px; }
+  #menu-btn:hover { color: var(--accent); }
+  #sidebar-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 99; display: none; }
+  #sidebar { position: fixed; top: 0; left: 0; width: 280px; max-width: 80vw; height: 100dvh; background: var(--surface); border-right: 1px solid var(--border); z-index: 100; transform: translateX(-100%); transition: transform .2s ease; display: flex; flex-direction: column; }
+  #sidebar.open { transform: translateX(0); }
+  #sidebar-backdrop.open { display: block; }
+  #sidebar-header { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  #sidebar-header .title { font-weight: 600; font-size: .95rem; }
+  #new-chat-btn { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 6px 12px; font-size: .82rem; cursor: pointer; }
+  #conv-list { flex: 1; overflow-y: auto; padding: 8px; }
+  .conv-item { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: .85rem; color: var(--text); transition: background .15s; }
+  .conv-item:hover { background: var(--bg); }
+  .conv-item.active { background: var(--bg); border: 1px solid var(--accent); }
+  .conv-item .conv-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conv-item .conv-del { opacity: 0; color: var(--muted); font-size: 1rem; padding: 0 4px; border: none; background: transparent; cursor: pointer; }
+  .conv-item:hover .conv-del { opacity: 1; }
+  .conv-item .conv-del:hover { color: #e05252; }
+  .conv-empty { color: var(--muted); font-size: .82rem; text-align: center; padding: 20px; }
+</style>
+</head>
+<body>
+
+<div id="loading">載入中…</div>
+
+<div id="chat-ui" style="display:none; flex-direction:column; height:100dvh">
+  <div id="sidebar-backdrop" onclick="toggleSidebar(false)"></div>
+  <aside id="sidebar">
+    <div id="sidebar-header">
+      <span class="title">對話歷史</span>
+      <button id="new-chat-btn" onclick="newConversation()">＋ 新對話</button>
+    </div>
+    <div id="conv-list"></div>
+    <div style="padding:10px 14px;border-top:1px solid var(--border);font-size:.82rem">
+      <a href="/agenthub/static/profile.html" style="color:var(--accent);text-decoration:none">⚙ 個人設定 / 登入</a>
+      <br>
+      <a href="/agenthub/static/memory.html" style="color:var(--accent);text-decoration:none">🧠 我的記憶</a>
+    </div>
+  </aside>
+  <div id="header">
+    <img id="cover-img" alt="cover">
+    <div id="header-inner">
+      <button id="menu-btn" onclick="toggleSidebar(true)" title="對話歷史">☰</button>
+      <div id="agent-avatar">🤖</div>
+      <div id="agent-info">
+        <div class="name" id="agent-name">Agent</div>
+        <div class="desc" id="agent-desc"></div>
+      </div>
+    </div>
+    <div id="skills-bar"></div>
+  </div>
+  <div id="messages"></div>
+  <div id="input-area">
+    <div id="quick-prompts"></div>
+    <div id="input-row">
+      <textarea id="user-input" rows="1" placeholder="輸入訊息…" onkeydown="handleKey(event)"></textarea>
+      <button id="send-btn" onclick="sendMessage()">送出</button>
+    </div>
+  </div>
+</div>
+
+<div id="error-ui" style="display:none; padding:60px; text-align:center; color:#e05252">
+  <h2>找不到此 Agent</h2>
+  <p style="margin-top:8px;color:var(--muted)">該連結可能已失效或設為私人。</p>
+</div>
+
+<script>
+const SLUG = '__AGENT_SLUG__';
+const BASE = '/agenthub';
+const history = [];
+let streaming = false;
+
+// ── Anonymous session id (persistent across reloads) ──
+const ANON_KEY = 'agenthub_anon_session'; // 保持一致
+function getAnonSession() {
+  let sid = localStorage.getItem(ANON_KEY);
+  if (!sid) {
+    sid = (crypto.randomUUID ? crypto.randomUUID() : 'a' + Math.random().toString(36).slice(2) + Date.now().toString(36));
+    localStorage.setItem(ANON_KEY, sid);
+  }
+  return sid;
+}
+function authHeaders() {
+  // 統一使用與 index.html 相同的 key:agenthub_token
+  const h = { 'X-Anon-Session': getAnonSession() };
+  const jwt = localStorage.getItem('agenthub_token'); // 保持一致
+  if (jwt) h['Authorization'] = 'Bearer ' + jwt;
+  return h;
+}
+
+let currentConvId = null;   // 當前對話 id
+let agentInfoCache = null;  // 給「新對話」重設歡迎卡用
+
+async function init() {
+  try {
+    const info = await fetch(`${BASE}/api/agents/public/${SLUG}`).then(r => {
+      if (!r.ok) throw new Error();
+      return r.json();
+    });
+    agentInfoCache = info;
+
+    // ── apply theme color ──
+    const accent = info.theme_color || '#6c63ff';
+    document.documentElement.style.setProperty('--accent', accent);
+
+    document.title = info.name + ' – AgentHub';
+
+    // ── cover image ──
+    if (info.cover_image_url) {
+      const img = document.getElementById('cover-img');
+      img.src = normalizeImgUrl(info.cover_image_url);
+      img.style.display = 'block';
+    }
+
+    // ── avatar (emoji or image URL) ──
+    const avatarEl = document.getElementById('agent-avatar');
+    const av = info.avatar || '🤖';
+    if (av.startsWith('http')) {
+      avatarEl.innerHTML = `<img src="${normalizeImgUrl(av)}" alt="avatar">`;
+    } else {
+      avatarEl.textContent = av;
+    }
+
+    document.getElementById('agent-name').textContent = info.name;
+    document.getElementById('agent-desc').textContent = info.description || '';
+
+    // ── skills bar ──
+    const skills = info.skills || [];
+    if (skills.length) {
+      const bar = document.getElementById('skills-bar');
+      bar.style.display = 'flex';
+      bar.innerHTML = skills.map(s => {
+        const prompt = s.prompt || s.label || '';
+        return `<div class="skill-chip" data-prompt="${esc(prompt)}" onclick="useSkill(this.dataset.prompt)">
+           <span class="skill-icon">${esc(s.icon || '⚡')}</span>
+           <span>${esc(s.label)}</span>
+         </div>`;
+      }).join('');
+    }
+
+    // ── welcome card ──
+    const msgs = document.getElementById('messages');
+    const welcome = info.welcome_message || '';
+    if (welcome) {
+      const card = document.createElement('div');
+      card.id = 'welcome-card';
+      card.innerHTML = `<div class="w-title">${esc(info.avatar || '🤖')} ${esc(info.name)}</div>
+        <div class="w-msg">${esc(welcome)}</div>`;
+      msgs.appendChild(card);
+    }
+
+    // ── suggested prompts (quick buttons above input) ──
+    const suggestions = info.suggested_prompts || [];
+    if (suggestions.length) {
+      const qp = document.getElementById('quick-prompts');
+      qp.innerHTML = suggestions.map(s =>
+        `<button class="quick-btn" data-sug="${esc(s)}" onclick="useSuggestion(this.dataset.sug)">${esc(s)}</button>`
+      ).join('');
+    }
+
+    document.getElementById('loading').style.display = 'none';
+    const chatUi = document.getElementById('chat-ui');
+    chatUi.style.display = 'flex';
+
+    // 載入歷史對話清單(失敗不影響聊天)
+    refreshConversations().catch(() => {});
+  } catch {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('error-ui').style.display = '';
+  }
+}
+
+function useSkill(prompt) {
+  const input = document.getElementById('user-input');
+  input.value = prompt;
+  input.focus();
+  autoResize(input);
+}
+
+function useSuggestion(text) {
+  const input = document.getElementById('user-input');
+  input.value = text;
+  input.focus();
+  autoResize(input);
+  sendMessage();
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  autoResize(e.target);
+}
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+}
+
+async function sendMessage() {
+  if (streaming) return;
+  const input = document.getElementById('user-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  // hide welcome card & suggestions on first send
+  const wc = document.getElementById('welcome-card');
+  if (wc) wc.remove();
+
+  input.value = ''; input.style.height = 'auto';
+  appendMsg('user', text);
+  history.push({ role: 'user', content: text });
+
+  const aiDiv = appendMsg('assistant', '');
+  aiDiv.classList.add('streaming');
+  streaming = true;
+  document.getElementById('send-btn').disabled = true;
+
+  let reply = '';
+  try {
+    const res = await fetch(`${BASE}/api/chat/${SLUG}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ messages: history, conversation_id: currentConvId }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+
+    // 抓回後端配發 / 沿用的 conversation id
+    const newConvId = res.headers.get('X-Conversation-Id');
+    if (newConvId) {
+      const wasNew = !currentConvId;
+      currentConvId = parseInt(newConvId, 10);
+      if (wasNew) refreshConversations().catch(() => {});
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const chunk = line.slice(5).replace(/^ /, '');  // 去掉 "data: " 後的單一前導空格
+        if (chunk === '[DONE]') break;
+        if (chunk.startsWith('[ERROR]')) { reply += chunk; break; }
+        reply += chunk;
+        aiDiv.textContent = reply;
+        scrollBottom();
+      }
+    }
+  } catch(e) {
+    reply = '[連線錯誤] ' + e.message;
+    aiDiv.textContent = reply;
+  }
+
+  aiDiv.classList.remove('streaming');
+  streaming = false;
+  document.getElementById('send-btn').disabled = false;
+  history.push({ role: 'assistant', content: reply });
+  scrollBottom();
+  refreshConversations().catch(() => {});
+}
+
+// ── Sidebar / conversation management ─────────────────────
+function toggleSidebar(open) {
+  document.getElementById('sidebar').classList.toggle('open', open);
+  document.getElementById('sidebar-backdrop').classList.toggle('open', open);
+}
+
+async function refreshConversations() {
+  const res = await fetch(`${BASE}/api/conversations?agent_slug=${encodeURIComponent(SLUG)}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) return;
+  const list = await res.json();
+  const box = document.getElementById('conv-list');
+  if (!list.length) {
+    box.innerHTML = '<div class="conv-empty">尚無對話</div>';
+    return;
+  }
+  box.innerHTML = list.map(c => {
+    const active = c.id === currentConvId ? 'active' : '';
+    const title = esc(c.title || '(未命名)');
+    return `<div class="conv-item ${active}" data-id="${c.id}" onclick="loadConversation(${c.id})">
+      <span class="conv-title" title="${title}">${title}</span>
+      <button class="conv-del" onclick="event.stopPropagation();deleteConversation(${c.id})" title="刪除">×</button>
+    </div>`;
+  }).join('');
+}
+
+async function loadConversation(id) {
+  if (streaming) return;
+  try {
+    const res = await fetch(`${BASE}/api/conversations/${id}/messages`, { headers: authHeaders() });
+    if (!res.ok) throw new Error('載入失敗');
+    const msgs = await res.json();
+    currentConvId = id;
+    history.length = 0;
+    const box = document.getElementById('messages');
+    box.innerHTML = '';
+    for (const m of msgs) {
+      appendMsg(m.role, m.content);
+      history.push({ role: m.role, content: m.content });
+    }
+    toggleSidebar(false);
+    refreshConversations();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function deleteConversation(id) {
+  if (!confirm('確定刪除此對話?')) return;
+  const res = await fetch(`${BASE}/api/conversations/${id}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  if (!res.ok) { alert('刪除失敗'); return; }
+  if (currentConvId === id) newConversation();
+  refreshConversations();
+}
+
+function newConversation() {
+  if (streaming) return;
+  currentConvId = null;
+  history.length = 0;
+  const box = document.getElementById('messages');
+  box.innerHTML = '';
+  // 還原歡迎卡
+  const info = agentInfoCache;
+  if (info && info.welcome_message) {
+    const card = document.createElement('div');
+    card.id = 'welcome-card';
+    card.innerHTML = `<div class="w-title">${esc(info.avatar || '🤖')} ${esc(info.name)}</div>
+      <div class="w-msg">${esc(info.welcome_message)}</div>`;
+    box.appendChild(card);
+  }
+  toggleSidebar(false);
+  refreshConversations();
+}
+
+function appendMsg(role, text) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.textContent = text;
+  document.getElementById('messages').appendChild(div);
+  scrollBottom();
+  return div;
+}
+
+function scrollBottom() {
+  const m = document.getElementById('messages');
+  m.scrollTop = m.scrollHeight;
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// 所有外部圖片統一走後端代理，解決 CORS / Google Drive 重定向問題
+function normalizeImgUrl(url) {
+  if (!url) return url;
+  // 已經是代理或本地路徑，不再包一層
+  if (url.startsWith('/api/imgproxy')) return url;
+  // Google Drive: 取出 FILE_ID 轉為 lh3 直連再走代理
+  const m1 = url.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if (m1) return `/api/imgproxy?url=${encodeURIComponent('https://lh3.googleusercontent.com/d/' + m1[1])}`;
+  const m2 = url.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/);
+  if (m2) return `/api/imgproxy?url=${encodeURIComponent('https://lh3.googleusercontent.com/d/' + m2[1])}`;
+  const m3 = url.match(/drive\.google\.com\/uc\?.*id=([a-zA-Z0-9_-]+)/);
+  if (m3) return `/api/imgproxy?url=${encodeURIComponent('https://lh3.googleusercontent.com/d/' + m3[1])}`;
+  // 其他外部圖片也走代理
+  if (url.startsWith('http')) return `/api/imgproxy?url=${encodeURIComponent(url)}`;
+  return url;
+}
+
+init();
+</script>
+</body>
+</html>
