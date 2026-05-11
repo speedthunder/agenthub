@@ -33,7 +33,7 @@ from .persona import (
 )
 from .knowledge_base import (
     compile_document, compile_conversation,
-    load_kb_for_prompt, search_kb,
+    load_kb_for_prompt, search_kb, retrieve_kb_for_query,
 )
 from .memory_manager import (
     extract_session_memory, upsert_session_memory,
@@ -385,8 +385,11 @@ async def chat(
             facts_block = build_facts_block(facts)
             if facts_block:
                 system_prompt = system_prompt + facts_block
-            # Long-term KB summaries + concepts
-            kb_block = load_kb_for_prompt(user_id)
+            # Long-term KB：依當前問題動態檢索相關內容
+            if last_user_msg:
+                kb_block = retrieve_kb_for_query(user_id, last_user_msg["content"])
+            else:
+                kb_block = load_kb_for_prompt(user_id)
             if kb_block:
                 system_prompt = system_prompt + kb_block
 

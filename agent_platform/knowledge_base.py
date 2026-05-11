@@ -15,6 +15,48 @@ import logging
 import re
 from typing import Optional
 
+# 英文停用詞（4 字以上才篩）
+_STOP_EN = {
+    'what', 'when', 'where', 'which', 'while', 'with', 'that', 'this',
+    'from', 'have', 'will', 'your', 'they', 'been', 'more', 'very',
+    'also', 'into', 'some', 'such', 'than', 'then', 'them', 'were',
+    'each', 'much', 'does', 'like', 'just', 'over', 'know', 'take',
+    'make', 'come', 'good', 'want', 'look', 'here', 'help', 'need',
+    'please', 'about', 'would', 'there', 'could', 'other', 'these',
+    'those', 'their', 'because', 'through', 'between',
+}
+
+
+def _extract_search_terms(text: str, max_terms: int = 6) -> list[str]:
+    """從使用者訊息中提取關鍵詞，供 KB 檢索使用。
+
+    中文：對連續漢字序列取 4→3→2 字的 n-gram，優先保留較長片語。
+    英文：取 4+ 字母的單詞，過濾停用詞。
+    """
+    seen: set[str] = set()
+    terms: list[str] = []
+
+    # ── 中文 n-gram ──────────────────────────────────────────────────────
+    for seq in re.findall(r'[一-鿿]+', text):
+        for n in (4, 3, 2):
+            for i in range(len(seq) - n + 1):
+                t = seq[i:i + n]
+                if t not in seen:
+                    seen.add(t)
+                    terms.append(t)
+                    if len(terms) >= max_terms:
+                        return terms
+
+    # ── 英文單詞 ─────────────────────────────────────────────────────────
+    for w in re.findall(r'[a-zA-Z]{4,}', text.lower()):
+        if w not in _STOP_EN and w not in seen:
+            seen.add(w)
+            terms.append(w)
+            if len(terms) >= max_terms:
+                return terms
+
+    return terms
+
 import httpx
 
 from .database import get_conn
@@ -304,6 +346,55 @@ def search_kb(user_id: int, query: str, limit: int = 10) -> dict:
         "summaries": [dict(r) for r in summaries],
         "concepts": [dict(r) for r in concepts],
     }
+
+
+def retrieve_kb_for_query(user_id: int, query: str, limit: int = 3) -> str:
+    """根據使用者當前訊息動態檢索相關 KB 內容，回傳可注入 system prompt 的文字區塊。
+
+    流程：
+      1. 從使用者訊息提取關鍵詞（中文 n-gram + 英文單詞）
+      2. 對 kb_summaries 和 kb_concepts 做多關鍵詞 OR LIKE 查詢
+      3. 找到相關內容 → 回傳 [Relevant knowledge] 區塊
+      4. 完全沒有相符內容 → 回傳空字串（不注入）
+    """
+    terms = _extract_search_terms(query)
+    if not terms:
+        return ""
+
+    # 每個 term 對應 title / core_conclusions 兩個 LIKE 條件
+    s_parts = " OR ".join("(title LIKE ? OR core_conclusions LIKE ?)" for _ in terms)
+    s_params = [p for t in terms for p in (f"%{t}%", f"%{t}%")]
+
+    c_parts = " OR ".join("(name LIKE ? OR definition LIKE ?)" for _ in terms)
+    c_params = [p for t in terms for p in (f"%{t}%", f"%{t}%")]
+
+    with get_conn() as conn:
+        summaries = conn.execute(
+            f"""SELECT title, core_conclusions FROM kb_summaries
+                WHERE user_id=? AND ({s_parts})
+                ORDER BY updated_at DESC LIMIT ?""",
+            [user_id] + s_params + [limit],
+        ).fetchall()
+
+        concepts = conn.execute(
+            f"""SELECT name, definition FROM kb_concepts
+                WHERE user_id=? AND ({c_parts})
+                ORDER BY source_count DESC LIMIT ?""",
+            [user_id] + c_params + [limit],
+        ).fetchall()
+
+    lines: list[str] = []
+    if summaries:
+        lines.append("[Relevant knowledge from your knowledge base]")
+        for s in summaries:
+            snippet = (s["core_conclusions"] or "")[:200].replace("\n", " ")
+            lines.append(f"• {s['title'] or 'Untitled'}: {snippet}")
+    if concepts:
+        lines.append("[Relevant concepts]")
+        for c in concepts:
+            lines.append(f"• {c['name']}: {c['definition']}")
+
+    return ("\n\n" + "\n".join(lines)) if lines else ""
 
 
 # ── LLM helpers ──────────────────────────────────────────────────────────────
