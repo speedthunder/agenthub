@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>知識庫 – AgentHub</title>
+<style>
+  :root {
+    --bg:#0f0f13; --surface:#1a1a24; --border:#2e2e42;
+    --accent:#6c63ff; --accent2:#48d1cc;
+    --text:#e8e8f0; --muted:#888;
+    --danger:#e05252; --success:#48d1cc;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;min-height:100dvh}
+  a{color:var(--accent2);text-decoration:none}
+  nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;height:56px;display:flex;align-items:center;justify-content:space-between}
+  nav .logo{font-size:1.2rem;font-weight:700;color:var(--accent)}
+  nav .nav-right{display:flex;gap:10px;align-items:center;font-size:.85rem}
+  nav .nav-right a{color:var(--muted)}
+  nav .nav-right a:hover{color:var(--accent2)}
+  nav .nav-right a.active{color:var(--accent2)}
+  main{max-width:960px;margin:0 auto;padding:28px 16px}
+  h1{font-size:1.5rem;margin-bottom:6px}
+  .sub{color:var(--muted);font-size:.88rem;margin-bottom:24px}
+
+  /* tabs */
+  .tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:20px}
+  .tab{padding:10px 20px;cursor:pointer;font-size:.9rem;color:var(--muted);border:none;background:none;border-bottom:2px solid transparent;transition:all .15s}
+  .tab:hover{color:var(--text)}
+  .tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+  .tab-panel{display:none}
+  .tab-panel.active{display:block}
+
+  /* toolbar */
+  .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+  .search-input{flex:1;min-width:200px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 12px;font-size:.88rem;outline:none}
+  .search-input:focus{border-color:var(--accent)}
+
+  /* buttons */
+  .btn{border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:.85rem;font-weight:500;transition:opacity .15s;font-family:inherit}
+  .btn:hover{opacity:.85}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .btn-primary{background:var(--accent);color:#fff}
+  .btn-outline{background:transparent;color:var(--text);border:1px solid var(--border)}
+  .btn-danger{background:transparent;color:var(--danger);border:1px solid #a23e3e}
+  .btn-success{background:#1d3a2a;color:var(--success);border:1px solid #2a5a3a}
+  .btn-sm{padding:5px 10px;font-size:.78rem}
+
+  /* document list */
+  .doc-list{display:flex;flex-direction:column;gap:10px}
+  .doc-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;display:flex;gap:12px;align-items:flex-start}
+  .doc-icon{font-size:1.4rem;line-height:1;flex-shrink:0;margin-top:2px}
+  .doc-body{flex:1;min-width:0}
+  .doc-title{font-weight:600;font-size:.95rem;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .doc-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.78rem;color:var(--muted)}
+  .doc-preview{font-size:.82rem;color:var(--muted);margin-top:6px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .tag{background:#252538;color:var(--accent2);padding:2px 8px;border-radius:99px;font-size:.72rem}
+  .badge-compiled{background:#1d3a2a;color:var(--success);padding:2px 8px;border-radius:99px;font-size:.72rem}
+  .badge-pending{background:#2a2a1a;color:#d4c572;padding:2px 8px;border-radius:99px;font-size:.72rem}
+  .doc-actions{display:flex;gap:6px;flex-shrink:0}
+
+  /* summary list */
+  .summary-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:10px}
+  .summary-title{font-weight:600;font-size:.95rem;margin-bottom:8px}
+  .summary-content{font-size:.88rem;line-height:1.6;color:#c8c8d8;margin-bottom:8px}
+  .summary-section{font-size:.78rem;color:var(--muted);margin-top:6px}
+  .summary-section strong{color:var(--accent2)}
+
+  /* concept grid */
+  .concept-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+  .concept-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .15s}
+  .concept-card:hover{border-color:var(--accent)}
+  .concept-name{font-weight:600;font-size:.95rem;margin-bottom:4px}
+  .concept-def{font-size:.82rem;color:var(--muted);line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .concept-src{font-size:.75rem;color:var(--accent);margin-top:6px}
+
+  /* search results */
+  .search-result{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:8px}
+  .search-result .type{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);margin-bottom:4px}
+  .search-result .title{font-weight:600;margin-bottom:4px}
+  .search-result .snippet{font-size:.85rem;color:var(--muted);line-height:1.5}
+  .search-result mark{background:#2a2a52;color:#a090ff;border-radius:2px}
+
+  /* upload form */
+  .upload-form{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px}
+  .upload-form h3{font-size:1rem;margin-bottom:14px;color:var(--accent2)}
+  .form-group{margin-bottom:12px}
+  .form-group label{display:block;font-size:.8rem;color:var(--muted);margin-bottom:4px}
+  .form-group input,.form-group textarea,.form-group select{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 12px;font-size:.88rem;outline:none;font-family:inherit}
+  .form-group input:focus,.form-group textarea:focus{border-color:var(--accent)}
+  .form-group textarea{resize:vertical;min-height:120px}
+  .form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+  /* modal */
+  .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;align-items:center;justify-content:center}
+  .modal-overlay.open{display:flex}
+  .modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto}
+  .modal h2{font-size:1.1rem;margin-bottom:14px}
+  .modal .close{float:right;background:none;border:none;color:var(--muted);font-size:1.4rem;cursor:pointer;line-height:1}
+  .modal .close:hover{color:var(--text)}
+  .concept-detail .def{font-size:.95rem;line-height:1.7;margin-bottom:12px}
+  .concept-detail .evidence{background:var(--bg);border-radius:8px;padding:12px;font-size:.82rem;line-height:1.6;color:#c8c8d8;white-space:pre-wrap;margin-bottom:12px}
+  .concept-detail .tension{font-size:.82rem;color:#d4c572;padding:8px 12px;background:#2a2a1a;border-radius:8px;margin-bottom:10px}
+  .concept-detail .sources{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+
+  /* compile panel */
+  .compile-panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:18px}
+  .compile-panel h3{font-size:.95rem;margin-bottom:8px;color:var(--accent2)}
+  .compile-panel p{font-size:.84rem;color:var(--muted);margin-bottom:12px;line-height:1.5}
+  .compile-result{margin-top:10px;padding:10px;border-radius:8px;font-size:.85rem}
+  .compile-result.ok{background:#1d3a1d;color:#9be29b}
+  .compile-result.err{background:#3a1d1d;color:#e29b9b}
+
+  /* msg */
+  .msg{padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:.88rem}
+  .msg.ok{background:#1d3a1d;color:#9be29b}
+  .msg.err{background:#3a1d1d;color:#e29b9b}
+
+  /* empty */
+  .empty{text-align:center;padding:40px 20px;color:var(--muted)}
+  .empty .icon{font-size:2.5rem;margin-bottom:10px}
+
+  /* auth card */
+  .auth-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;text-align:center;margin-top:40px}
+
+  /* spinner */
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid #ffffff44;border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<nav>
+  <span class="logo">🤖 AgentHub</span>
+  <div class="nav-right">
+    <a href="/agenthub/static/index.html">我的 Agents</a>
+    <a href="/agenthub/static/memory.html">🧠 記憶</a>
+    <a href="/agenthub/static/kb.html" class="active">📚 知識庫</a>
+    <a href="/agenthub/static/profile.html">⚙ 設定</a>
+    <span id="nav-user" style="color:var(--muted)"></span>
+  </div>
+</nav>
+
+<main>
+  <div id="msg-area"></div>
+
+  <div id="needs-login" class="auth-card" style="display:none">
+    <p style="color:var(--muted)">請先 <a href="/agenthub/static/profile.html">登入</a>，知識庫功能僅對登入用戶啟用。</p>
+  </div>
+
+  <div id="content" style="display:none">
+    <h1>📚 知識庫</h1>
+    <p class="sub">上傳文件、觸發 LLM 編譯，讓 Agent 對話時自動引用你的知識。對話達到設定輪數也會自動將內容累積進知識庫。</p>
+
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('docs')">文件</button>
+      <button class="tab" onclick="switchTab('summaries')">摘要</button>
+      <button class="tab" onclick="switchTab('concepts')">概念</button>
+      <button class="tab" onclick="switchTab('search')">搜尋</button>
+    </div>
+
+    <!-- ── 文件 tab ── -->
+    <div class="tab-panel active" id="tab-docs">
+      <!-- 上傳表單 -->
+      <div class="upload-form">
+        <h3>+ 新增文件</h3>
+        <div class="form-row">
+          <div class="form-group">
+            <label>標題 *</label>
+            <input id="doc-title" placeholder="文件名稱">
+          </div>
+          <div class="form-group">
+            <label>來源類型</label>
+            <select id="doc-source-type">
+              <option value="note">note</option>
+              <option value="article">article</option>
+              <option value="conversation">conversation</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>來源參考（URL 或備註）</label>
+            <input id="doc-source-ref" placeholder="https://…">
+          </div>
+          <div class="form-group">
+            <label>標籤（逗號分隔）</label>
+            <input id="doc-tags" placeholder="AI, 學習, 筆記">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>內容 *</label>
+          <textarea id="doc-content" placeholder="貼上文章全文、筆記或任何知識內容…"></textarea>
+        </div>
+        <button class="btn btn-primary" onclick="uploadDoc()">上傳文件</button>
+      </div>
+
+      <!-- 編譯觸發面板 -->
+      <div class="compile-panel">
+        <h3>⚡ 觸發 LLM 編譯</h3>
+        <p>將待編譯的文件送給 LLM，自動生成摘要、關鍵證據、疑點，並更新概念條目。每次最多處理 10 份未編譯文件。</p>
+        <button class="btn btn-success" id="compile-btn" onclick="triggerCompile()">開始編譯</button>
+        <div id="compile-result"></div>
+      </div>
+
+      <!-- 文件清單 -->
+      <div class="toolbar">
+        <span style="font-size:.85rem;color:var(--muted)">全部文件</span>
+        <span id="doc-count" style="font-size:.8rem;color:var(--muted)"></span>
+        <button class="btn btn-outline btn-sm" onclick="loadDocs()">重新整理</button>
+      </div>
+      <div id="doc-list" class="doc-list"></div>
+    </div>
+
+    <!-- ── 摘要 tab ── -->
+    <div class="tab-panel" id="tab-summaries">
+      <div class="toolbar">
+        <span style="font-size:.85rem;color:var(--muted)">編譯後的摘要</span>
+        <button class="btn btn-outline btn-sm" onclick="loadSummaries()">重新整理</button>
+      </div>
+      <div id="summary-list"></div>
+    </div>
+
+    <!-- ── 概念 tab ── -->
+    <div class="tab-panel" id="tab-concepts">
+      <div class="toolbar">
+        <input class="search-input" id="concept-filter" placeholder="篩選概念名稱…" oninput="filterConcepts()">
+        <button class="btn btn-outline btn-sm" onclick="loadConcepts()">重新整理</button>
+      </div>
+      <div id="concept-grid" class="concept-grid"></div>
+    </div>
+
+    <!-- ── 搜尋 tab ── -->
+    <div class="tab-panel" id="tab-search">
+      <div class="toolbar">
+        <input class="search-input" id="search-q" placeholder="輸入關鍵字搜尋摘要與概念…" onkeydown="if(event.key==='Enter')doSearch()">
+        <button class="btn btn-primary" onclick="doSearch()">搜尋</button>
+      </div>
+      <div id="search-results"></div>
+    </div>
+  </div>
+</main>
+
+<!-- 概念詳情 Modal -->
+<div class="modal-overlay" id="concept-modal">
+  <div class="modal">
+    <button class="close" onclick="closeConceptModal()">×</button>
+    <h2 id="cm-name"></h2>
+    <div class="concept-detail">
+      <div class="def" id="cm-def"></div>
+      <div id="cm-evidence-wrap" style="display:none">
+        <div style="font-size:.78rem;color:var(--muted);margin-bottom:6px">關鍵證據</div>
+        <div class="evidence" id="cm-evidence"></div>
+      </div>
+      <div id="cm-tension-wrap" style="display:none">
+        <div class="tension" id="cm-tension"></div>
+      </div>
+      <div class="sources" id="cm-sources"></div>
+      <div style="font-size:.78rem;color:var(--muted);margin-top:10px" id="cm-meta"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const JWT_KEY = 'agenthub_token';
+const BASE = '/agenthub';
+function getJwt() { return localStorage.getItem(JWT_KEY); }
+function authHdr() { const t = getJwt(); return t ? { Authorization: 'Bearer ' + t } : {}; }
+function esc(s) {
+  return String(s || '').replace(/[&<>"']/g,
+    c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+// ── 訊息 ────────────────────────────────────────────────
+function showMsg(text, type = 'ok') {
+  const el = document.getElementById('msg-area');
+  el.innerHTML = `<div class="msg ${type}">${esc(text)}</div>`;
+  setTimeout(() => { el.innerHTML = ''; }, 3500);
+}
+
+// ── Tabs ────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'summaries') loadSummaries();
+  else if (name === 'concepts') loadConcepts();
+  else if (name === 'search') document.getElementById('search-q').focus();
+}
+
+// ── 初始化 ───────────────────────────────────────────────
+async function init() {
+  if (!getJwt()) {
+    document.getElementById('needs-login').style.display = '';
+    return;
+  }
+  document.getElementById('content').style.display = '';
+  try {
+    const r = await fetch(BASE + '/auth/me', { headers: authHdr() });
+    if (r.ok) {
+      const u = await r.json();
+      document.getElementById('nav-user').textContent = u.username;
+    } else if (r.status === 401) {
+      localStorage.removeItem(JWT_KEY);
+      document.getElementById('content').style.display = 'none';
+      document.getElementById('needs-login').style.display = '';
+      return;
+    }
+  } catch {}
+  await loadDocs();
+}
+
+// ── 文件 ─────────────────────────────────────────────────
+let allDocs = [];
+
+async function loadDocs() {
+  const box = document.getElementById('doc-list');
+  box.innerHTML = '<div class="empty"><span class="spinner"></span></div>';
+  try {
+    const r = await fetch(BASE + '/api/kb/documents', { headers: authHdr() });
+    if (!r.ok) throw new Error('載入失敗');
+    allDocs = await r.json();
+    renderDocs();
+  } catch (e) { showMsg(e.message, 'err'); box.innerHTML = ''; }
+}
+
+function renderDocs() {
+  const box = document.getElementById('doc-list');
+  const cnt = document.getElementById('doc-count');
+  cnt.textContent = `共 ${allDocs.length} 份`;
+  if (!allDocs.length) {
+    box.innerHTML = '<div class="empty"><div class="icon">📄</div><p>尚無文件。上傳第一份知識文件吧！</p></div>';
+    return;
+  }
+  box.innerHTML = allDocs.map(d => `
+    <div class="doc-card">
+      <div class="doc-icon">📄</div>
+      <div class="doc-body">
+        <div class="doc-title">${esc(d.title)}</div>
+        <div class="doc-meta">
+          <span class="${d.compiled ? 'badge-compiled' : 'badge-pending'}">${d.compiled ? '已編譯' : '待編譯'}</span>
+          ${d.source_type ? `<span>${esc(d.source_type)}</span>` : ''}
+          ${(d.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}
+          <span>${new Date(d.created_at).toLocaleDateString('zh-TW')}</span>
+          <span>${(d.content || '').length} 字</span>
+        </div>
+        ${d.content ? `<div class="doc-preview">${esc(d.content.slice(0, 160))}</div>` : ''}
+      </div>
+      <div class="doc-actions">
+        <button class="btn btn-danger btn-sm" onclick="deleteDoc(${d.id}, '${esc(d.title)}')">刪除</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function uploadDoc() {
+  const title = document.getElementById('doc-title').value.trim();
+  const content = document.getElementById('doc-content').value.trim();
+  if (!title || !content) { showMsg('標題和內容為必填', 'err'); return; }
+  const tagsRaw = document.getElementById('doc-tags').value.trim();
+  const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+  const body = {
+    title,
+    content,
+    source_type: document.getElementById('doc-source-type').value.trim() || 'note',
+    source_ref: document.getElementById('doc-source-ref').value.trim(),
+    tags,
+  };
+  try {
+    const r = await fetch(BASE + '/api/kb/documents', {
+      method: 'POST',
+      headers: { ...authHdr(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error((await r.json()).detail || '上傳失敗');
+    // 清空表單
+    ['doc-title','doc-content','doc-source-ref','doc-tags'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+    document.getElementById('doc-source-type').selectedIndex = 0;
+    showMsg('文件已上傳！可點「開始編譯」讓 LLM 生成摘要。');
+    await loadDocs();
+  } catch (e) { showMsg(e.message, 'err'); }
+}
+
+async function deleteDoc(id, title) {
+  if (!confirm(`確定刪除文件「${title}」？`)) return;
+  const r = await fetch(BASE + '/api/kb/documents/' + id, {
+    method: 'DELETE', headers: authHdr()
+  });
+  if (r.ok || r.status === 204) { showMsg('已刪除'); await loadDocs(); }
+  else showMsg('刪除失敗', 'err');
+}
+
+// ── 編譯 ─────────────────────────────────────────────────
+async function triggerCompile() {
+  const btn = document.getElementById('compile-btn');
+  const resultEl = document.getElementById('compile-result');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 編譯中…';
+  resultEl.innerHTML = '';
+  try {
+    const r = await fetch(BASE + '/api/kb/compile', {
+      method: 'POST',
+      headers: { ...authHdr(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || '編譯失敗');
+    if (data.count === 0) {
+      resultEl.innerHTML = '<div class="compile-result ok">沒有待編譯的文件（全部已編譯）。</div>';
+    } else {
+      resultEl.innerHTML = `<div class="compile-result ok">成功編譯 ${data.count} 份文件（ID: ${data.compiled.join(', ')}）。</div>`;
+      await loadDocs();
+    }
+  } catch (e) {
+    resultEl.innerHTML = `<div class="compile-result err">${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '開始編譯';
+  }
+}
+
+// ── 摘要 ─────────────────────────────────────────────────
+async function loadSummaries() {
+  const box = document.getElementById('summary-list');
+  box.innerHTML = '<div class="empty"><span class="spinner"></span></div>';
+  try {
+    const r = await fetch(BASE + '/api/kb/summaries', { headers: authHdr() });
+    if (!r.ok) throw new Error('載入失敗');
+    const summaries = await r.json();
+    if (!summaries.length) {
+      box.innerHTML = '<div class="empty"><div class="icon">📋</div><p>尚無摘要。上傳文件後點「開始編譯」生成。</p></div>';
+      return;
+    }
+    box.innerHTML = summaries.map(s => {
+      const tags = (s.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('');
+      return `
+        <div class="summary-card">
+          <div class="summary-title">${esc(s.title)}</div>
+          ${s.core_conclusions ? `<div class="summary-content">${esc(s.core_conclusions)}</div>` : ''}
+          <div class="doc-meta" style="margin-bottom:6px">
+            ${tags}
+            ${s.origin ? `<span style="color:var(--muted)">來源：${esc(s.origin)}</span>` : ''}
+            <span>${new Date(s.created_at).toLocaleDateString('zh-TW')}</span>
+          </div>
+          ${s.key_evidence ? `<div class="summary-section"><strong>關鍵證據：</strong>${esc(s.key_evidence.slice(0, 200))}</div>` : ''}
+          ${s.questions ? `<div class="summary-section"><strong>疑點/缺口：</strong>${esc(s.questions.slice(0, 160))}</div>` : ''}
+        </div>
+      `;
+    }).join('');
+  } catch (e) { showMsg(e.message, 'err'); box.innerHTML = ''; }
+}
+
+// ── 概念 ─────────────────────────────────────────────────
+let allConcepts = [];
+
+async function loadConcepts() {
+  const grid = document.getElementById('concept-grid');
+  grid.innerHTML = '<div class="empty"><span class="spinner"></span></div>';
+  try {
+    const r = await fetch(BASE + '/api/kb/concepts', { headers: authHdr() });
+    if (!r.ok) throw new Error('載入失敗');
+    allConcepts = await r.json();
+    renderConcepts(allConcepts);
+  } catch (e) { showMsg(e.message, 'err'); grid.innerHTML = ''; }
+}
+
+function renderConcepts(list) {
+  const grid = document.getElementById('concept-grid');
+  if (!list.length) {
+    grid.innerHTML = '<div class="empty" style="grid-column:1/-1"><div class="icon">💡</div><p>尚無概念條目。編譯文件後自動生成。</p></div>';
+    return;
+  }
+  grid.innerHTML = list.map(c => `
+    <div class="concept-card" onclick="openConceptModal('${esc(c.name)}')">
+      <div class="concept-name">${esc(c.name)}</div>
+      <div class="concept-def">${esc(c.definition || '（無定義）')}</div>
+      <div class="concept-src">出現 ${c.source_count} 次</div>
+    </div>
+  `).join('');
+}
+
+function filterConcepts() {
+  const q = document.getElementById('concept-filter').value.toLowerCase();
+  renderConcepts(q ? allConcepts.filter(c => c.name.toLowerCase().includes(q) || (c.definition || '').toLowerCase().includes(q)) : allConcepts);
+}
+
+async function openConceptModal(name) {
+  try {
+    const r = await fetch(BASE + '/api/kb/concepts/' + encodeURIComponent(name), { headers: authHdr() });
+    if (!r.ok) throw new Error('載入失敗');
+    const c = await r.json();
+    document.getElementById('cm-name').textContent = c.name;
+    document.getElementById('cm-def').textContent = c.definition || '';
+    // 概念額外欄位
+    const evidenceWrap = document.getElementById('cm-evidence-wrap');
+    const practiceText = [c.my_practice, c.external_views, c.examples].filter(Boolean).join('\n\n');
+    if (practiceText) {
+      evidenceWrap.style.display = '';
+      document.getElementById('cm-evidence').textContent = practiceText;
+    } else { evidenceWrap.style.display = 'none'; }
+    const tensionWrap = document.getElementById('cm-tension-wrap');
+    if (c.tensions) {
+      tensionWrap.style.display = '';
+      document.getElementById('cm-tension').textContent = '⚡ 張力/缺口：' + c.tensions;
+    } else { tensionWrap.style.display = 'none'; }
+    const srcs = (c.sources || []);
+    document.getElementById('cm-sources').innerHTML = srcs.length
+      ? srcs.map(s => `<span class="tag">摘要 #${esc(String(s))}</span>`).join('') : '';
+    document.getElementById('cm-meta').textContent = `最後更新：${new Date(c.updated_at).toLocaleString('zh-TW')}`;
+    document.getElementById('concept-modal').classList.add('open');
+  } catch (e) { showMsg(e.message, 'err'); }
+}
+
+function closeConceptModal() {
+  document.getElementById('concept-modal').classList.remove('open');
+}
+document.getElementById('concept-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeConceptModal();
+});
+
+// ── 搜尋 ─────────────────────────────────────────────────
+async function doSearch() {
+  const q = document.getElementById('search-q').value.trim();
+  if (!q) return;
+  const box = document.getElementById('search-results');
+  box.innerHTML = '<div class="empty"><span class="spinner"></span></div>';
+  try {
+    const r = await fetch(BASE + '/api/kb/search?q=' + encodeURIComponent(q), { headers: authHdr() });
+    if (!r.ok) throw new Error('搜尋失敗');
+    const data = await r.json();
+    const results = [...(data.summaries || []).map(s => ({ ...s, _type: 'summary' })),
+                     ...(data.concepts || []).map(c => ({ ...c, _type: 'concept' }))];
+    if (!results.length) {
+      box.innerHTML = '<div class="empty"><div class="icon">🔍</div><p>找不到相關結果。</p></div>';
+      return;
+    }
+    box.innerHTML = results.map(item => {
+      if (item._type === 'summary') {
+        return `
+          <div class="search-result">
+            <div class="type">摘要</div>
+            <div class="title">${esc(item.title)}</div>
+            <div class="snippet">${esc((item.core_conclusions || '').slice(0, 200))}</div>
+          </div>`;
+      }
+      return `
+        <div class="search-result" onclick="openConceptModal('${esc(item.name)}')" style="cursor:pointer">
+          <div class="type">概念</div>
+          <div class="title">${esc(item.name)}</div>
+          <div class="snippet">${esc((item.definition || '').slice(0, 200))}</div>
+        </div>`;
+    }).join('');
+  } catch (e) { showMsg(e.message, 'err'); box.innerHTML = ''; }
+}
+
+init();
+</script>
+</body>
+</html>

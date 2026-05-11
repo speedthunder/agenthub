@@ -148,3 +148,67 @@ class FactOut(BaseModel):
     confidence: float
     created_at: str
     updated_at: str
+
+
+# ── Knowledge Base ─────────────────────────────────────────
+class KBDocumentCreate(BaseModel):
+    title: str = Field("", max_length=200)
+    content: str = Field(..., min_length=10, max_length=50000)
+    source_type: str = Field("note", pattern="^(note|article|conversation)$")
+    source_ref: str = ""
+    tags: List[str] = []
+
+
+class KBDocumentOut(BaseModel):
+    id: int
+    title: str
+    content: str = ""
+    source_type: str
+    source_ref: str
+    tags: List[str]
+    compiled: bool
+    created_at: str
+
+
+class KBSummaryOut(BaseModel):
+    id: int
+    document_id: Optional[int] = None
+    title: str
+    origin: str
+    core_conclusions: str
+    key_evidence: str
+    questions: str
+    terms: str
+    tags: List[str]
+    created_at: str
+    updated_at: str
+
+
+class KBConceptOut(BaseModel):
+    id: int
+    name: str
+    definition: str
+    my_practice: str
+    external_views: str
+    tensions: str
+    examples: str
+    sources: List[int]
+    source_count: int
+    created_at: str
+    updated_at: str
+
+
+class KBCompileRequest(BaseModel):
+    doc_ids: Optional[List[int]] = None      # None = compile all pending
+    agent_id: Optional[int] = None           # which agent LLM to use; None = first agent
+
+
+# ── Session Memory (short-term) ────────────────────────────
+class SessionMemoryItem(BaseModel):
+    key: str
+    value: str
+
+
+class SessionMemoryOut(BaseModel):
+    conversation_id: int
+    items: List[SessionMemoryItem]

@@ -94,6 +94,70 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_facts_user
                 ON user_facts(user_id, agent_id);
+
+            -- Short-term: working memory for the current conversation session
+            CREATE TABLE IF NOT EXISTS session_memory (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                key             TEXT NOT NULL,
+                value           TEXT NOT NULL,
+                updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(conversation_id, key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_mem
+                ON session_memory(conversation_id);
+
+            -- Long-term KB: raw documents uploaded by user
+            CREATE TABLE IF NOT EXISTS kb_documents (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                title       TEXT NOT NULL DEFAULT '',
+                content     TEXT NOT NULL,
+                source_type TEXT DEFAULT 'note',       -- note | article | conversation
+                source_ref  TEXT DEFAULT '',            -- conversation_id or URL
+                tags        TEXT DEFAULT '[]',
+                compiled    INTEGER DEFAULT 0,
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_kb_docs_user
+                ON kb_documents(user_id);
+
+            -- Long-term KB: compiled summaries (wiki/summaries equivalent)
+            CREATE TABLE IF NOT EXISTS kb_summaries (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                document_id      INTEGER REFERENCES kb_documents(id) ON DELETE SET NULL,
+                title            TEXT NOT NULL DEFAULT '',
+                origin           TEXT DEFAULT 'note',   -- note | article | conversation
+                core_conclusions TEXT DEFAULT '',
+                key_evidence     TEXT DEFAULT '',
+                questions        TEXT DEFAULT '',
+                terms            TEXT DEFAULT '',
+                tags             TEXT DEFAULT '[]',
+                created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_kb_summaries_user
+                ON kb_summaries(user_id);
+
+            -- Long-term KB: concept entries across conversations (wiki/concepts equivalent)
+            CREATE TABLE IF NOT EXISTS kb_concepts (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name           TEXT NOT NULL,
+                definition     TEXT NOT NULL DEFAULT '',
+                my_practice    TEXT DEFAULT '',
+                external_views TEXT DEFAULT '',
+                tensions       TEXT DEFAULT '',
+                examples       TEXT DEFAULT '',
+                sources        TEXT DEFAULT '[]',       -- JSON array of summary ids
+                source_count   INTEGER DEFAULT 0,
+                created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_kb_concepts_user
+                ON kb_concepts(user_id);
         """)
 
 

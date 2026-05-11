@@ -24,13 +24,22 @@ from .schemas import (
     AgentCreate, AgentUpdate, AgentOut,
     ChatRequest, ConversationOut, MessageOut,
     ProfileOut, ProfileUpdate, FactOut,
+    KBDocumentCreate, KBDocumentOut, KBSummaryOut, KBConceptOut, KBCompileRequest,
+    SessionMemoryOut, SessionMemoryItem,
 )
 from .llm_bridge import stream_chat
 from .persona import (
     extract_facts, upsert_facts, load_facts_for_prompt, build_facts_block,
 )
-# 新增 config 設定
-from .config import CONTEXT_WINDOW_DIALOGS, PERSONA_UPDATE_INTERVAL
+from .knowledge_base import (
+    compile_document, compile_conversation,
+    load_kb_for_prompt, search_kb,
+)
+from .memory_manager import (
+    extract_session_memory, upsert_session_memory,
+    load_session_memory, build_session_memory_block,
+)
+from .config import CONTEXT_WINDOW_DIALOGS, PERSONA_UPDATE_INTERVAL, SESSION_MEMORY_INTERVAL, KB_COMPILE_INTERVAL
 
 # ── Lifespan ──────────────────────────────────────────────
 @asynccontextmanager
@@ -365,18 +374,21 @@ async def chat(
     facts_sharing_ok = True
     if user_id is not None:
         profile_for_chat = _load_profile(user_id)
-        # share_with_agents = 0 視為「拒絕任何使用者畫像注入」(含 profile 與 facts)
         if profile_for_chat is not None and not profile_for_chat.get("share_with_agents", 1):
             facts_sharing_ok = False
         persona_block = _build_persona_block(profile_for_chat)
         if persona_block:
             system_prompt = system_prompt + persona_block
-        # Phase 3:注入已知 facts
+        # Phase 3: 長期 facts
         if facts_sharing_ok:
             facts = load_facts_for_prompt(user_id, agent["id"])
             facts_block = build_facts_block(facts)
             if facts_block:
                 system_prompt = system_prompt + facts_block
+            # Long-term KB summaries + concepts
+            kb_block = load_kb_for_prompt(user_id)
+            if kb_block:
+                system_prompt = system_prompt + kb_block
 
     if persist:
         with get_conn() as conn:
@@ -388,7 +400,7 @@ async def chat(
                 ).fetchone()
                 if not conv:
                     raise HTTPException(status_code=404, detail="Conversation not found")
-                # ownership check
+                # ownership check — 確保記憶完全隔離在自己的帳號下
                 if user_id is not None and conv["user_id"] != user_id:
                     raise HTTPException(status_code=403, detail="Not your conversation")
                 if user_id is None and conv["anon_session_id"] != anon_session_id:
@@ -415,6 +427,15 @@ async def chat(
                     (conversation_id,),
                 )
 
+    # ── 短期記憶注入 ──────────────────────────────────────────
+    # 必須在 ownership check 之後、確認 conversation_id 屬於本人才載入
+    # 僅登入用戶（user_id is not None）享有記憶功能，匿名不注入
+    if user_id is not None and conversation_id and facts_sharing_ok:
+        session_items = load_session_memory(conversation_id)
+        session_block = build_session_memory_block(session_items)
+        if session_block:
+            system_prompt = system_prompt + session_block
+
     async def event_stream():
         assistant_buf: list[str] = []
         try:
@@ -435,59 +456,81 @@ async def chat(
             yield f"data: [ERROR] {str(e)}\n\n"
         yield "data: [DONE]\n\n"
 
-        # 串流結束後才寫入 assistant 訊息
-        if persist and conversation_id and assistant_buf:
-            full = "".join(assistant_buf)
-            assistant_msg_id = None
-            try:
-                with get_conn() as conn:
-                    cur = conn.execute(
-                        "INSERT INTO messages (conversation_id, role, content) VALUES (?,?,?)",
-                        (conversation_id, "assistant", full),
-                    )
-                    assistant_msg_id = cur.lastrowid
-                    conn.execute(
-                        "UPDATE conversations SET updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                        (conversation_id,),
-                    )
-            except Exception as e:
-                print("[DEBUG] assistant message persist error:", e)
+        # ── 串流結束後：持久化 + 背景記憶萃取 ────────────────────────────────
+        if not (persist and conversation_id and assistant_buf):
+            return
+        full = "".join(assistant_buf)
+        assistant_msg_id = None
+        try:
+            with get_conn() as conn:
+                cur = conn.execute(
+                    "INSERT INTO messages (conversation_id, role, content) VALUES (?,?,?)",
+                    (conversation_id, "assistant", full),
+                )
+                assistant_msg_id = cur.lastrowid
+                conn.execute(
+                    "UPDATE conversations SET updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (conversation_id,),
+                )
+        except Exception as e:
+            print(f"[DEBUG] assistant message persist error: {e}")
+            return
 
-            # ── Phase 3:背景萃取 facts(僅登入用戶且未關閉分享開關) ──
-            # 只每 PERSONA_UPDATE_INTERVAL 次才 extract
-            if (
-                user_id is not None
-                and facts_sharing_ok
-                and last_user_msg
-                and full
-            ):
-                # 取得目前該 user/agent 的訊息數
-                with get_conn() as conn:
-                    count = conn.execute(
-                        "SELECT COUNT(*) FROM messages WHERE conversation_id=?",
-                        (conversation_id,)
-                    ).fetchone()[0]
-                if count % PERSONA_UPDATE_INTERVAL == 0:
-                    try:
-                        print(f"[DEBUG] extract_facts input user_message={last_user_msg['content']}")
-                        print(f"[DEBUG] extract_facts input assistant_message={full}")
-                        new_facts = await extract_facts(
-                            provider=agent["llm_provider"],
-                            model=agent["llm_model"],
-                            base_url=agent["llm_base_url"],
-                            api_key=agent["llm_api_key"],
-                            user_message=last_user_msg["content"],
-                            assistant_message=full,
-                        )
-                        print(f"[DEBUG] extract_facts output: {new_facts}")
-                        upsert_facts(
-                            user_id, new_facts,
-                            agent_id=None,  # 預設全域;之後可開放讓 agent 標 scope
-                            source_message_id=assistant_msg_id,
-                        )
-                        print(f"[DEBUG] upsert_facts done, user_id={user_id}, facts={new_facts}")
-                    except Exception as e:
-                        print(f"[DEBUG] extract_facts/upsert_facts error: {e}")
+        if not (user_id is not None and facts_sharing_ok and last_user_msg):
+            return
+
+        with get_conn() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id=?",
+                (conversation_id,)
+            ).fetchone()[0]
+
+        llm_cfg = dict(
+            provider=agent["llm_provider"],
+            model=agent["llm_model"],
+            base_url=agent["llm_base_url"],
+            api_key=agent["llm_api_key"],
+        )
+
+        # ── 短期記憶：每 SESSION_MEMORY_INTERVAL 則更新 working memory ──────
+        if count % SESSION_MEMORY_INTERVAL == 0:
+            try:
+                session_items = await extract_session_memory(
+                    **llm_cfg,
+                    user_message=last_user_msg["content"],
+                    assistant_message=full,
+                )
+                if session_items and conversation_id:
+                    upsert_session_memory(conversation_id, session_items)
+            except Exception as e:
+                print(f"[DEBUG] session memory error: {e}")
+
+        # ── 長期 facts：每 PERSONA_UPDATE_INTERVAL 則萃取一次 ────────────────
+        if count % PERSONA_UPDATE_INTERVAL == 0:
+            try:
+                new_facts = await extract_facts(
+                    **llm_cfg,
+                    user_message=last_user_msg["content"],
+                    assistant_message=full,
+                )
+                upsert_facts(
+                    user_id, new_facts,
+                    agent_id=None,
+                    source_message_id=assistant_msg_id,
+                )
+            except Exception as e:
+                print(f"[DEBUG] extract_facts error: {e}")
+
+        # ── 長期 KB：每 KB_COMPILE_INTERVAL 則把對話編譯進知識庫 ─────────────
+        if count % KB_COMPILE_INTERVAL == 0 and conversation_id:
+            try:
+                await compile_conversation(
+                    **llm_cfg,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                )
+            except Exception as e:
+                print(f"[DEBUG] kb compile_conversation error: {e}")
 
     headers = {}
     if conversation_id:
@@ -707,6 +750,187 @@ _ALLOWED_IMAGE_HOSTS = {
     "i.imgur.com",
     "images.unsplash.com",
 }
+
+# ── Knowledge Base endpoints ──────────────────────────────────────────────────
+
+@app.post("/api/kb/documents", status_code=201)
+def create_kb_document(req: KBDocumentCreate, user=Depends(get_current_user)):
+    """Upload a raw document into the knowledge base (not yet compiled)."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            """INSERT INTO kb_documents (user_id, title, content, source_type, source_ref, tags)
+               VALUES (?,?,?,?,?,?)""",
+            (user["id"], req.title, req.content, req.source_type,
+             req.source_ref, _json.dumps(req.tags, ensure_ascii=False)),
+        )
+    return {"id": cur.lastrowid, "message": "Document added. POST /api/kb/compile to process."}
+
+
+@app.get("/api/kb/documents", response_model=list[KBDocumentOut])
+def list_kb_documents(user=Depends(get_current_user)):
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM kb_documents WHERE user_id=? ORDER BY created_at DESC",
+            (user["id"],),
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["tags"] = _parse_json_field(d.get("tags"), [])
+        d["compiled"] = bool(d.get("compiled", 0))
+        out.append(KBDocumentOut(**d))
+    return out
+
+
+@app.delete("/api/kb/documents/{doc_id}", status_code=204)
+def delete_kb_document(doc_id: int, user=Depends(get_current_user)):
+    with get_conn() as conn:
+        result = conn.execute(
+            "DELETE FROM kb_documents WHERE id=? AND user_id=?", (doc_id, user["id"])
+        )
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+
+@app.post("/api/kb/compile")
+async def compile_kb(req: KBCompileRequest, user=Depends(get_current_user)):
+    """Compile uncompiled documents into summaries and concepts (uses your first agent's LLM)."""
+    with get_conn() as conn:
+        if req.agent_id:
+            agent = conn.execute(
+                "SELECT * FROM agents WHERE id=? AND owner_id=?", (req.agent_id, user["id"])
+            ).fetchone()
+        else:
+            agent = conn.execute(
+                "SELECT * FROM agents WHERE owner_id=? ORDER BY created_at DESC LIMIT 1",
+                (user["id"],),
+            ).fetchone()
+
+        if not agent:
+            raise HTTPException(status_code=400, detail="No agent configured. Create an agent first.")
+
+        if req.doc_ids:
+            placeholders = ",".join("?" * len(req.doc_ids))
+            docs = conn.execute(
+                f"SELECT * FROM kb_documents WHERE user_id=? AND id IN ({placeholders})",
+                [user["id"]] + list(req.doc_ids),
+            ).fetchall()
+        else:
+            docs = conn.execute(
+                "SELECT * FROM kb_documents WHERE user_id=? AND compiled=0 ORDER BY created_at ASC LIMIT 10",
+                (user["id"],),
+            ).fetchall()
+
+    agent = dict(agent)
+    compiled_ids: list[int] = []
+    for doc in docs:
+        result = await compile_document(
+            document_id=doc["id"],
+            user_id=user["id"],
+            provider=agent["llm_provider"],
+            model=agent["llm_model"],
+            base_url=agent["llm_base_url"],
+            api_key=agent["llm_api_key"],
+        )
+        if result:
+            compiled_ids.append(doc["id"])
+
+    return {"compiled": compiled_ids, "count": len(compiled_ids)}
+
+
+@app.get("/api/kb/summaries", response_model=list[KBSummaryOut])
+def list_kb_summaries(user=Depends(get_current_user)):
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM kb_summaries WHERE user_id=? ORDER BY updated_at DESC",
+            (user["id"],),
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["tags"] = _parse_json_field(d.get("tags"), [])
+        out.append(KBSummaryOut(**d))
+    return out
+
+
+@app.get("/api/kb/concepts", response_model=list[KBConceptOut])
+def list_kb_concepts(user=Depends(get_current_user)):
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM kb_concepts WHERE user_id=? ORDER BY source_count DESC, updated_at DESC",
+            (user["id"],),
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["sources"] = _parse_json_field(d.get("sources"), [])
+        out.append(KBConceptOut(**d))
+    return out
+
+
+@app.get("/api/kb/concepts/{name}")
+def get_kb_concept(name: str, user=Depends(get_current_user)):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM kb_concepts WHERE user_id=? AND name=?", (user["id"], name)
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Concept not found")
+    d = dict(row)
+    d["sources"] = _parse_json_field(d.get("sources"), [])
+    return d
+
+
+@app.get("/api/kb/search")
+def search_knowledge_base(q: str, user=Depends(get_current_user)):
+    """Keyword search across KB summaries and concepts."""
+    return search_kb(user["id"], q)
+
+
+# ── Memory endpoints ──────────────────────────────────────────────────────────
+
+@app.get("/api/memory/session/{conv_id}", response_model=SessionMemoryOut)
+def get_session_memory(conv_id: int, user=Depends(get_current_user)):
+    """Get short-term working memory for a specific conversation."""
+    with get_conn() as conn:
+        conv = conn.execute(
+            "SELECT id FROM conversations WHERE id=? AND user_id=?",
+            (conv_id, user["id"]),
+        ).fetchone()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    items = load_session_memory(conv_id)
+    return SessionMemoryOut(
+        conversation_id=conv_id,
+        items=[SessionMemoryItem(**i) for i in items],
+    )
+
+
+@app.get("/api/memory/long-term")
+def get_long_term_memory(user=Depends(get_current_user)):
+    """Get all long-term memory: facts + KB summaries + concepts."""
+    with get_conn() as conn:
+        facts = conn.execute(
+            """SELECT category, key, value, confidence FROM user_facts
+               WHERE user_id=? ORDER BY updated_at DESC LIMIT 50""",
+            (user["id"],),
+        ).fetchall()
+        summaries = conn.execute(
+            """SELECT id, title, core_conclusions, tags, origin, created_at FROM kb_summaries
+               WHERE user_id=? ORDER BY updated_at DESC LIMIT 30""",
+            (user["id"],),
+        ).fetchall()
+        concepts = conn.execute(
+            """SELECT name, definition, source_count, updated_at FROM kb_concepts
+               WHERE user_id=? ORDER BY source_count DESC LIMIT 30""",
+            (user["id"],),
+        ).fetchall()
+    return {
+        "facts": [dict(r) for r in facts],
+        "summaries": [dict(r) for r in summaries],
+        "concepts": [dict(r) for r in concepts],
+    }
+
 
 @app.get("/api/imgproxy")
 async def img_proxy(url: str):

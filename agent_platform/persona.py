@@ -209,42 +209,50 @@ def upsert_facts(
     agent_id: Optional[int] = None,
     source_message_id: Optional[int] = None,
 ) -> int:
-    """寫入 facts(同 key 直接覆蓋為較新版本)。回傳實際寫入筆數。"""
+    """寫入 facts（同 category+key 直接覆蓋為較新版本）。回傳實際寫入筆數。
+
+    agent_id 以 NULL 儲存代表跨 agent 通用記憶，避免觸發不存在 agent 的 FK 約束。
+    SQLite 的 NULL != NULL 使 ON CONFLICT 無法可靠處理 NULL 欄位，
+    因此改用 SELECT→UPDATE/INSERT 的方式確保正確 upsert。
+    """
     if not facts:
         return 0
-        
-    # 將 None 轉為 0，避免 SQL 處理 NULL 時 ON CONFLICT 判斷失效
-    safe_agent_id = agent_id if agent_id is not None else 0
     n = 0
-    
     with get_conn() as conn:
         for f in facts:
-            conn.execute(
-                """INSERT INTO user_facts
-                   (user_id, agent_id, category, key, value, confidence, source_message_id)
-                   VALUES (?,?,?,?,?,?,?)
-                   ON CONFLICT(user_id, agent_id, category, key) DO UPDATE SET
-                       value = excluded.value,
-                       confidence = excluded.confidence,
-                       source_message_id = excluded.source_message_id,
-                       updated_at = CURRENT_TIMESTAMP
-                """,
-                (user_id, safe_agent_id, f["category"], f["key"],
-                 f["value"], f["confidence"], source_message_id),
-            )
+            existing = conn.execute(
+                "SELECT id FROM user_facts WHERE user_id=? AND category=? AND key=?",
+                (user_id, f["category"], f["key"]),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """UPDATE user_facts
+                       SET value=?, confidence=?, source_message_id=?,
+                           updated_at=CURRENT_TIMESTAMP
+                       WHERE id=?""",
+                    (f["value"], f["confidence"], source_message_id, existing["id"]),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO user_facts
+                       (user_id, agent_id, category, key, value, confidence, source_message_id)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (user_id, None, f["category"], f["key"],
+                     f["value"], f["confidence"], source_message_id),
+                )
             n += 1
     return n
 
 
 def load_facts_for_prompt(user_id: int, agent_id: int, limit: int = 30) -> list[dict]:
-    """撈出可注入 prompt 的 facts:全域(agent_id=0) + 此 agent 專屬。"""
+    """撈出可注入 prompt 的所有 user facts（跨 agent 通用）。"""
     with get_conn() as conn:
         rows = conn.execute(
             """SELECT category, key, value FROM user_facts
-               WHERE user_id=? AND (agent_id = 0 OR agent_id=?)
+               WHERE user_id=?
                ORDER BY updated_at DESC
                LIMIT ?""",
-            (user_id, agent_id, limit),
+            (user_id, limit),
         ).fetchall()
     return [dict(r) for r in rows]
 
