@@ -385,14 +385,19 @@ def retrieve_kb_for_query(user_id: int, query: str, limit: int = 3) -> str:
 
     lines: list[str] = []
     if summaries:
-        lines.append("[Relevant knowledge from your knowledge base]")
+        lines.append(
+            "[Relevant knowledge from your knowledge base]\n"
+            "IMPORTANT: When your answer draws on any entry below, explicitly cite it "
+            "by name — e.g. 「根據你知識庫中的《{title}》…」or「According to your KB entry '{title}'…」. "
+            "If an entry is not relevant, ignore it silently."
+        )
         for s in summaries:
             snippet = (s["core_conclusions"] or "")[:200].replace("\n", " ")
-            lines.append(f"• {s['title'] or 'Untitled'}: {snippet}")
+            lines.append(f"• 《{s['title'] or 'Untitled'}》: {snippet}")
     if concepts:
         lines.append("[Relevant concepts]")
         for c in concepts:
-            lines.append(f"• {c['name']}: {c['definition']}")
+            lines.append(f"• 【{c['name']}】: {c['definition']}")
 
     return ("\n\n" + "\n".join(lines)) if lines else ""
 
