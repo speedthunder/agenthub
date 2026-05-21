@@ -10,5 +10,8 @@ COPY . /app
 # 安裝 Python 依賴
 RUN pip install --no-cache-dir -r agent_platform/requirements.txt
 
+# 建立持久化資料目錄
+RUN mkdir -p /data
+
 # 預設啟動 FastAPI 應用
 CMD ["python", "-m", "agent_platform.main"]
