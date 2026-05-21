@@ -1,8 +1,15 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from agent_platform.app import app as agenthub_app
+from agent_platform.database import init_db
 
-main_app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+main_app = FastAPI(lifespan=lifespan)
 
 # 將子應用掛載到 /agenthub
 main_app.mount("/agenthub", agenthub_app)
