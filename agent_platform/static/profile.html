@@ -235,6 +235,8 @@ async function initGoogleSignIn(){
       document.getElementById('google-btn'),
       {theme:'outline',size:'large',text:'signin_with',locale:'zh_TW',width:300}
     );
+    // One Tap：頁面載入時自動彈出 Google 帳號確認框
+    google.accounts.id.prompt();
   }catch(e){console.error('Google Sign-In init failed',e)}
 }
 
