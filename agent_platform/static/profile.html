@@ -199,7 +199,7 @@ async function logout(){
 
 async function afterLogin(){
   // 取得 user info
-  try{await authFetch('/agenthub/auth/me')}catch{}
+  try{await authFetch('/agenthub/auth/me')}catch(e){console.warn('afterLogin /auth/me failed',e)}
   await loadProfile();
 }
 

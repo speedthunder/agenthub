@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import ipaddress
 import os
@@ -19,7 +20,7 @@ def validate_llm_base_url(url: str) -> None:
     if not host:
         raise ValueError("Missing host in base_url")
     host_l = host.lower()
-    if host_l in {"localhost"}:
+    if host_l in {"localhost", "localhost.localdomain"} or host_l.endswith(".localhost"):
         raise ValueError(f"Blocked internal host: {host}")
     try:
         ip = ipaddress.ip_address(host_l)
@@ -44,8 +45,8 @@ def _load_master_key() -> bytes:
     try:
         raw = base64.urlsafe_b64decode(secret.encode("utf-8"))
         if len(raw) == 32:
-            return secret.encode("utf-8")
-    except Exception:
+            return base64.urlsafe_b64encode(raw)
+    except (binascii.Error, ValueError):
         pass
     digest = hashlib.sha256(secret.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest)

@@ -5,7 +5,8 @@ import time
 
 from fastapi.testclient import TestClient
 
-TMP_DB = tempfile.mktemp(suffix=".db")
+with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as _tmp_db:
+    TMP_DB = _tmp_db.name
 os.environ["DB_PATH"] = TMP_DB
 os.environ["JWT_SECRET"] = "test-secret"
 os.environ["APP_SECRET_KEY"] = "test-app-secret-key"

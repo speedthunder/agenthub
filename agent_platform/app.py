@@ -79,6 +79,7 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # ── Auth helpers ──────────────────────────────────────────
+# auto_error=False: 允許同時支援 Cookie 與 Header，並讓 optional auth 可回傳 None。
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
@@ -130,12 +131,31 @@ def _decode_and_load_user(token: str) -> dict:
     return user
 
 
+def _row_token_version(row) -> int:
+    try:
+        if hasattr(row, "keys") and "token_version" in row.keys():
+            return int(row["token_version"] or 0)
+    except (TypeError, ValueError, KeyError):
+        pass
+    return 0
+
+
+def _client_ip(request: Request) -> str:
+    forwarded_for = (request.headers.get("x-forwarded-for") or "").strip()
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip() or "unknown"
+    real_ip = (request.headers.get("x-real-ip") or "").strip()
+    if real_ip:
+        return real_ip
+    return request.client.host if request.client else "unknown"
+
+
 def _create_user_token(user_id: int, token_version: int = 0) -> str:
     return create_access_token({"sub": str(user_id), "tv": int(token_version)})
 
 
 def _auth_rate_keys(request: Request, identifier: str) -> list[str]:
-    ip = request.client.host if request.client else "unknown"
+    ip = _client_ip(request)
     ident = (identifier or "").strip().lower() or "_"
     return [f"ip:{ip}", f"acct:{ip}:{ident}"]
 
@@ -200,6 +220,7 @@ def get_optional_user(
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
     elif not x_anon_session:
+        # 匿名會話優先走 X-Anon-Session 隔離，不自動套用瀏覽器 cookie 身分。
         token = request.cookies.get(AUTH_COOKIE_NAME)
     if not token:
         return None
@@ -332,7 +353,7 @@ def login(req: LoginRequest, request: Request, response: Response):
     if not verify_password(req.password, row["hashed_pw"]):
         _record_login_failure(request, req.email)
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = _create_user_token(row["id"], token_version=row["token_version"] or 0)
+    token = _create_user_token(row["id"], token_version=_row_token_version(row))
     _record_login_success(request, req.email)
     _set_auth_cookie(response, token)
     return TokenResponse(access_token=token)
@@ -393,7 +414,7 @@ async def google_auth(req: GoogleAuthRequest, request: Request, response: Respon
                 row = conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
         user_id = row["id"]
 
-    token = _create_user_token(user_id, token_version=row["token_version"] or 0)
+    token = _create_user_token(user_id, token_version=_row_token_version(row))
     _record_login_success(request, "google")
     _set_auth_cookie(response, token)
     return TokenResponse(access_token=token)
@@ -471,6 +492,7 @@ def update_agent(agent_id: int, req: AgentUpdate, user=Depends(get_current_user)
             raise HTTPException(status_code=404, detail="Agent not found")
         updates = req.model_dump(exclude_none=True)
         if "llm_api_key" in updates:
+            # API key 欄位留空視為「不更新既有 key」，避免覆蓋成空值。
             if not (updates.get("llm_api_key") or "").strip():
                 updates.pop("llm_api_key", None)
             else:
