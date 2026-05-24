@@ -11,6 +11,7 @@ import time
 TMP_DB = tempfile.mktemp(suffix=".db")
 os.environ["DB_PATH"] = TMP_DB
 os.environ["JWT_SECRET"] = "test-secret"
+os.environ["APP_SECRET_KEY"] = "test-app-secret-key"
 USERNAME = f"alice_{int(time.time())}"
 EMAIL = f"{USERNAME}@test.com"
 

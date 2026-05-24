@@ -60,6 +60,7 @@ def _extract_search_terms(text: str, max_terms: int = 6) -> list[str]:
 import httpx
 
 from .database import get_conn
+from .security_utils import validate_llm_base_url
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
@@ -412,6 +413,7 @@ def retrieve_kb_for_query(user_id: int, query: str, limit: int = 3) -> str:
 async def _llm_complete(
     provider: str, model: str, base_url: str, api_key: str, messages: list
 ) -> str:
+    validate_llm_base_url(base_url)
     if provider == "ollama":
         return await _ollama(base_url, model, messages)
     elif provider in ("openai", "azure"):

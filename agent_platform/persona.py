@@ -14,6 +14,7 @@ from typing import Optional
 import httpx
 
 from .database import get_conn
+from .security_utils import validate_llm_base_url
 
 
 # 允許的分類(限制 LLM 輸出)
@@ -83,6 +84,7 @@ async def extract_facts(
     ]
     
     try:
+        validate_llm_base_url(base_url)
         if provider == "ollama":
             text = await _ollama_complete(base_url, model, messages)
         elif provider == "openai":

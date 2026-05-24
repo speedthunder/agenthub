@@ -195,12 +195,10 @@
 
 <script>
 const BASE = '/agenthub';  // 統一代理路徑
-let token = localStorage.getItem('agenthub_token');
 let currentUser = null;
 
 // ── Init ──────────────────────────────────────────────────
 async function init() {
-  if (!token) { showAuth(); return; }
   try {
     const res = await api('GET', '/auth/me');
     currentUser = res;
@@ -232,9 +230,7 @@ async function initGoogleSignIn() {
       client_id: google_client_id,
       callback: async (resp) => {
         try {
-          const r = await api('POST', '/auth/google', {credential: resp.credential});
-          token = r.access_token;
-          localStorage.setItem('agenthub_token', token);
+          await api('POST', '/auth/google', {credential: resp.credential});
           init();
         } catch(e) { toast('Google 登入失敗：' + (e.detail || e.message || ''), true); }
       }
@@ -260,9 +256,7 @@ async function doLogin() {
   const email = document.getElementById('login-email').value.trim();
   const password = document.getElementById('login-pw').value;
   try {
-    const res = await api('POST', '/auth/login', { email, password });
-    token = res.access_token;
-    localStorage.setItem('agenthub_token', token);
+    await api('POST', '/auth/login', { email, password });
     init();
   } catch(e) { toast('登入失敗：' + (e.detail || '請確認帳號密碼'), true); }
 }
@@ -271,14 +265,12 @@ async function doRegister() {
   const email = document.getElementById('reg-email').value.trim();
   const password = document.getElementById('reg-pw').value;
   try {
-    const res = await api('POST', '/auth/register', { username, email, password });
-    token = res.access_token;
-    localStorage.setItem('agenthub_token', token);
+    await api('POST', '/auth/register', { username, email, password });
     init();
   } catch(e) { toast('註冊失敗：' + (e.detail || '請確認資料'), true); }
 }
-function logout() {
-  token = null; localStorage.removeItem('agenthub_token');
+async function logout() {
+  try { await api('POST', '/auth/logout'); } catch {}
   showAuth();
 }
 
@@ -524,7 +516,7 @@ async function uploadBlob(blob, kind) {
   try {
     const res = await fetch(`/api/upload/image?kind=${kind}`, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}` },
+      credentials: 'include',
       body: formData,
     });
     if (!res.ok) throw new Error(await res.text());
@@ -539,7 +531,7 @@ async function uploadBlob(blob, kind) {
 // ── Utils ─────────────────────────────────────────────────
 async function api(method, path, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
-  if (token) opts.headers['Authorization'] = `Bearer ${token}`;
+  opts.credentials = 'include';
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(BASE + path, opts);
   if (res.status === 204) return null;

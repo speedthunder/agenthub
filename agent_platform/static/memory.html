@@ -82,9 +82,9 @@
 </div>
 
 <script>
-const JWT_KEY='agenthub_token';
-function getJwt(){return localStorage.getItem(JWT_KEY)}
-function authHeader(){const t=getJwt();return t?{Authorization:'Bearer '+t}:{}}
+function authFetch(url, opts={}){
+  return fetch(url,{credentials:'include',...opts});
+}
 
 function showMsg(text,type='ok'){
   const el=document.getElementById('msg-area');
@@ -96,25 +96,23 @@ function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&l
 let allFacts=[];
 
 async function init(){
-  if(!getJwt()){
+  const me=await authFetch('/agenthub/auth/me');
+  if(me.status===401){
     document.getElementById('needs-login').style.display='';
     document.getElementById('auth-status').textContent='未登入';
     return;
   }
+  if(!me.ok){showMsg('登入狀態檢查失敗','err');return;}
   document.getElementById('content').style.display='';
-  // user info
-  try{
-    const r=await fetch('/agenthub/auth/me',{headers:authHeader()});
-    if(r.ok){const u=await r.json();document.getElementById('auth-status').innerHTML='已登入:<strong>'+esc(u.username)+'</strong>'}
-    else if(r.status===401){localStorage.removeItem(JWT_KEY);return init()}
-  }catch{}
+  const u=await me.json();
+  document.getElementById('auth-status').innerHTML='已登入:<strong>'+esc(u.username)+'</strong>';
   await refresh();
 }
 
 async function refresh(){
   try{
-    const r=await fetch('/agenthub/api/facts',{headers:authHeader()});
-    if(r.status===401){localStorage.removeItem(JWT_KEY);return init()}
+    const r=await authFetch('/agenthub/api/facts');
+    if(r.status===401)return init();
     if(!r.ok)throw new Error('載入失敗');
     allFacts=await r.json();
     render();
@@ -151,14 +149,14 @@ function render(){
 
 async function delFact(id){
   if(!confirm('確定刪除這條記憶?'))return;
-  const r=await fetch('/agenthub/api/facts/'+id,{method:'DELETE',headers:authHeader()});
+  const r=await authFetch('/agenthub/api/facts/'+id,{method:'DELETE'});
   if(!r.ok&&r.status!==204)return showMsg('刪除失敗','err');
   await refresh();
 }
 
 async function clearAll(){
   if(!confirm('確定要清空所有記憶?此動作無法復原。'))return;
-  const r=await fetch('/agenthub/api/facts',{method:'DELETE',headers:authHeader()});
+  const r=await authFetch('/agenthub/api/facts',{method:'DELETE'});
   if(!r.ok&&r.status!==204)return showMsg('清空失敗','err');
   showMsg('已清空');
   await refresh();

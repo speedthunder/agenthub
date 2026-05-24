@@ -146,11 +146,7 @@ function getAnonSession() {
   return sid;
 }
 function authHeaders() {
-  // 統一使用與 index.html 相同的 key:agenthub_token
-  const h = { 'X-Anon-Session': getAnonSession() };
-  const jwt = localStorage.getItem('agenthub_token'); // 保持一致
-  if (jwt) h['Authorization'] = 'Bearer ' + jwt;
-  return h;
+  return { 'X-Anon-Session': getAnonSession() };
 }
 
 let currentConvId = null;   // 當前對話 id
@@ -282,6 +278,7 @@ async function sendMessage() {
   try {
     const res = await fetch(`${BASE}/api/chat/${SLUG}`, {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ messages: history, conversation_id: currentConvId }),
     });
@@ -335,6 +332,7 @@ function toggleSidebar(open) {
 
 async function refreshConversations() {
   const res = await fetch(`${BASE}/api/conversations?agent_slug=${encodeURIComponent(SLUG)}`, {
+    credentials: 'include',
     headers: authHeaders(),
   });
   if (!res.ok) return;
@@ -357,7 +355,10 @@ async function refreshConversations() {
 async function loadConversation(id) {
   if (streaming) return;
   try {
-    const res = await fetch(`${BASE}/api/conversations/${id}/messages`, { headers: authHeaders() });
+    const res = await fetch(`${BASE}/api/conversations/${id}/messages`, {
+      credentials: 'include',
+      headers: authHeaders(),
+    });
     if (!res.ok) throw new Error('載入失敗');
     const msgs = await res.json();
     currentConvId = id;
@@ -379,6 +380,7 @@ async function deleteConversation(id) {
   if (!confirm('確定刪除此對話?')) return;
   const res = await fetch(`${BASE}/api/conversations/${id}`, {
     method: 'DELETE',
+    credentials: 'include',
     headers: authHeaders(),
   });
   if (!res.ok) { alert('刪除失敗'); return; }
