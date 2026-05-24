@@ -151,12 +151,9 @@
 </div>
 
 <script>
-const JWT_KEY = 'agenthub_token';
-const USER_KEY = 'agenthub_user';
-function getJwt(){return localStorage.getItem(JWT_KEY)}
-function setAuth(token,user){localStorage.setItem(JWT_KEY,token);if(user)localStorage.setItem(USER_KEY,JSON.stringify(user))}
-function clearAuth(){localStorage.removeItem(JWT_KEY);localStorage.removeItem(USER_KEY)}
-function authHeader(){const t=getJwt();return t?{Authorization:'Bearer '+t}:{}}
+function authFetch(url, opts={}){
+  return fetch(url,{credentials:'include',...opts});
+}
 
 function showMsg(text,type='ok'){
   const el=document.getElementById('msg-area');
@@ -177,10 +174,9 @@ async function doLogin(){
   const password=document.getElementById('li-pw').value;
   if(!email||!password)return showMsg('請填 email 與密碼','err');
   try{
-    const r=await fetch('/agenthub/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
+    const r=await fetch('/agenthub/auth/login',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
     if(!r.ok)throw new Error((await r.json()).detail||'登入失敗');
-    const data=await r.json();
-    setAuth(data.access_token);
+    await r.json();
     await afterLogin();
   }catch(e){showMsg(e.message,'err')}
 }
@@ -190,21 +186,20 @@ async function doRegister(){
   const password=document.getElementById('rg-pw').value;
   if(!username||!email||password.length<6)return showMsg('請完整填寫(密碼至少 6 字)','err');
   try{
-    const r=await fetch('/agenthub/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,email,password})});
+    const r=await fetch('/agenthub/auth/register',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,email,password})});
     if(!r.ok)throw new Error((await r.json()).detail||'註冊失敗');
-    const data=await r.json();
-    setAuth(data.access_token);
+    await r.json();
     await afterLogin();
   }catch(e){showMsg(e.message,'err')}
 }
-function logout(){clearAuth();location.reload()}
+async function logout(){
+  try{await authFetch('/agenthub/auth/logout',{method:'POST'})}catch{}
+  location.reload();
+}
 
 async function afterLogin(){
   // 取得 user info
-  try{
-    const r=await fetch('/agenthub/auth/me',{headers:authHeader()});
-    if(r.ok){const u=await r.json();localStorage.setItem(USER_KEY,JSON.stringify(u))}
-  }catch{}
+  try{await authFetch('/agenthub/auth/me')}catch{}
   await loadProfile();
 }
 
@@ -223,10 +218,9 @@ async function initGoogleSignIn(){
       client_id:google_client_id,
       callback:async(resp)=>{
         try{
-          const r=await fetch('/agenthub/auth/google',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({credential:resp.credential})});
+          const r=await fetch('/agenthub/auth/google',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({credential:resp.credential})});
           if(!r.ok)throw new Error((await r.json()).detail||'Google 登入失敗');
-          const data=await r.json();
-          setAuth(data.access_token);
+          await r.json();
           await afterLogin();
         }catch(e){showMsg(e.message,'err')}
       }
@@ -239,22 +233,22 @@ async function initGoogleSignIn(){
 }
 
 async function loadProfile(){
-  if(!getJwt()){
-    document.getElementById('auth-card').style.display='';
-    document.getElementById('profile-card').style.display='none';
-    document.getElementById('auth-status').innerHTML='未登入';
-    initGoogleSignIn();
-    return;
-  }
-  document.getElementById('auth-card').style.display='none';
-  document.getElementById('profile-card').style.display='';
-
-  const u=JSON.parse(localStorage.getItem(USER_KEY)||'null');
-  document.getElementById('auth-status').innerHTML=u?`已登入:<strong>${escape(u.username)}</strong>`:'已登入';
-
   try{
-    const r=await fetch('/agenthub/api/profile',{headers:authHeader()});
-    if(r.status===401){clearAuth();return loadProfile()}
+    const me=await authFetch('/agenthub/auth/me');
+    if(me.status===401){
+      document.getElementById('auth-card').style.display='';
+      document.getElementById('profile-card').style.display='none';
+      document.getElementById('auth-status').innerHTML='未登入';
+      initGoogleSignIn();
+      return;
+    }
+    if(!me.ok)throw new Error('登入狀態檢查失敗');
+    const u=await me.json();
+    document.getElementById('auth-card').style.display='none';
+    document.getElementById('profile-card').style.display='';
+    document.getElementById('auth-status').innerHTML=`已登入:<strong>${escape(u.username)}</strong>`;
+
+    const r=await authFetch('/agenthub/api/profile');
     if(!r.ok)throw new Error('載入失敗');
     const p=await r.json();
     document.getElementById('p-name').value=p.display_name||'';
@@ -285,7 +279,7 @@ async function saveProfile(){
   };
   const btn=document.getElementById('save-btn');btn.disabled=true;
   try{
-    const r=await fetch('/agenthub/api/profile',{method:'PUT',headers:{'Content-Type':'application/json',...authHeader()},body:JSON.stringify(body)});
+    const r=await authFetch('/agenthub/api/profile',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!r.ok)throw new Error((await r.json()).detail||'儲存失敗');
     showMsg('已儲存,新對話會使用更新後的設定。');
   }catch(e){showMsg(e.message,'err')}
@@ -295,7 +289,7 @@ async function saveProfile(){
 async function clearProfile(){
   if(!confirm('確定要清空所有個人資料?'))return;
   try{
-    const r=await fetch('/agenthub/api/profile',{method:'DELETE',headers:authHeader()});
+    const r=await authFetch('/agenthub/api/profile',{method:'DELETE'});
     if(!r.ok&&r.status!==204)throw new Error('清除失敗');
     showMsg('已清空。');
     await loadProfile();

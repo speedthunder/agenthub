@@ -263,10 +263,10 @@
 </div>
 
 <script>
-const JWT_KEY = 'agenthub_token';
 const BASE = '/agenthub';
-function getJwt() { return localStorage.getItem(JWT_KEY); }
-function authHdr() { const t = getJwt(); return t ? { Authorization: 'Bearer ' + t } : {}; }
+function authFetch(url, opts = {}) {
+  return fetch(url, { credentials: 'include', ...opts });
+}
 function esc(s) {
   return String(s || '').replace(/[&<>"']/g,
     c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -292,23 +292,18 @@ function switchTab(name) {
 
 // ── 初始化 ───────────────────────────────────────────────
 async function init() {
-  if (!getJwt()) {
+  const me = await authFetch(BASE + '/auth/me');
+  if (me.status === 401) {
     document.getElementById('needs-login').style.display = '';
     return;
   }
+  if (!me.ok) {
+    showMsg('登入狀態檢查失敗', 'err');
+    return;
+  }
   document.getElementById('content').style.display = '';
-  try {
-    const r = await fetch(BASE + '/auth/me', { headers: authHdr() });
-    if (r.ok) {
-      const u = await r.json();
-      document.getElementById('nav-user').textContent = u.username;
-    } else if (r.status === 401) {
-      localStorage.removeItem(JWT_KEY);
-      document.getElementById('content').style.display = 'none';
-      document.getElementById('needs-login').style.display = '';
-      return;
-    }
-  } catch {}
+  const u = await me.json();
+  document.getElementById('nav-user').textContent = u.username;
   await loadDocs();
 }
 
@@ -319,7 +314,7 @@ async function loadDocs() {
   const box = document.getElementById('doc-list');
   box.innerHTML = '<div class="empty"><span class="spinner"></span></div>';
   try {
-    const r = await fetch(BASE + '/api/kb/documents', { headers: authHdr() });
+    const r = await authFetch(BASE + '/api/kb/documents');
     if (!r.ok) throw new Error('載入失敗');
     allDocs = await r.json();
     renderDocs();
@@ -371,7 +366,8 @@ async function uploadDoc() {
   try {
     const r = await fetch(BASE + '/api/kb/documents', {
       method: 'POST',
-      headers: { ...authHdr(), 'Content-Type': 'application/json' },
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     if (!r.ok) throw new Error((await r.json()).detail || '上傳失敗');
@@ -387,9 +383,7 @@ async function uploadDoc() {
 
 async function deleteDoc(id, title) {
   if (!confirm(`確定刪除文件「${title}」？`)) return;
-  const r = await fetch(BASE + '/api/kb/documents/' + id, {
-    method: 'DELETE', headers: authHdr()
-  });
+  const r = await authFetch(BASE + '/api/kb/documents/' + id, { method: 'DELETE' });
   if (r.ok || r.status === 204) { showMsg('已刪除'); await loadDocs(); }
   else showMsg('刪除失敗', 'err');
 }
@@ -404,7 +398,8 @@ async function triggerCompile() {
   try {
     const r = await fetch(BASE + '/api/kb/compile', {
       method: 'POST',
-      headers: { ...authHdr(), 'Content-Type': 'application/json' },
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     });
     const data = await r.json();
@@ -428,7 +423,7 @@ async function loadSummaries() {
   const box = document.getElementById('summary-list');
   box.innerHTML = '<div class="empty"><span class="spinner"></span></div>';
   try {
-    const r = await fetch(BASE + '/api/kb/summaries', { headers: authHdr() });
+    const r = await authFetch(BASE + '/api/kb/summaries');
     if (!r.ok) throw new Error('載入失敗');
     const summaries = await r.json();
     if (!summaries.length) {
@@ -461,7 +456,7 @@ async function loadConcepts() {
   const grid = document.getElementById('concept-grid');
   grid.innerHTML = '<div class="empty"><span class="spinner"></span></div>';
   try {
-    const r = await fetch(BASE + '/api/kb/concepts', { headers: authHdr() });
+    const r = await authFetch(BASE + '/api/kb/concepts');
     if (!r.ok) throw new Error('載入失敗');
     allConcepts = await r.json();
     renderConcepts(allConcepts);
@@ -490,7 +485,7 @@ function filterConcepts() {
 
 async function openConceptModal(name) {
   try {
-    const r = await fetch(BASE + '/api/kb/concepts/' + encodeURIComponent(name), { headers: authHdr() });
+    const r = await authFetch(BASE + '/api/kb/concepts/' + encodeURIComponent(name));
     if (!r.ok) throw new Error('載入失敗');
     const c = await r.json();
     document.getElementById('cm-name').textContent = c.name;
@@ -529,7 +524,7 @@ async function doSearch() {
   const box = document.getElementById('search-results');
   box.innerHTML = '<div class="empty"><span class="spinner"></span></div>';
   try {
-    const r = await fetch(BASE + '/api/kb/search?q=' + encodeURIComponent(q), { headers: authHdr() });
+    const r = await authFetch(BASE + '/api/kb/search?q=' + encodeURIComponent(q));
     if (!r.ok) throw new Error('搜尋失敗');
     const data = await r.json();
     const results = [...(data.summaries || []).map(s => ({ ...s, _type: 'summary' })),

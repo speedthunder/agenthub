@@ -4,10 +4,12 @@ FastAPI + SQLite + JWT + LLM streaming
 """
 import json as _json
 import os
+import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Depends, HTTPException, status, Request, Header
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Header, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -40,8 +42,19 @@ from .memory_manager import (
     load_session_memory, build_session_memory_block,
 )
 from .config import CONTEXT_WINDOW_DIALOGS, PERSONA_UPDATE_INTERVAL, SESSION_MEMORY_INTERVAL, KB_COMPILE_INTERVAL
+from .security_utils import encrypt_llm_api_key, decrypt_llm_api_key
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+AUTH_COOKIE_NAME = os.environ.get("AUTH_COOKIE_NAME", "agenthub_session")
+AUTH_COOKIE_SECURE = os.environ.get("AUTH_COOKIE_SECURE", "false").lower() == "true"
+_cookie_same_site = os.environ.get("AUTH_COOKIE_SAMESITE", "lax").strip().lower()
+AUTH_COOKIE_SAMESITE = _cookie_same_site if _cookie_same_site in {"lax", "strict", "none"} else "lax"
+AUTH_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
+LOGIN_RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("LOGIN_RATE_LIMIT_WINDOW_SECONDS", "300"))
+LOGIN_RATE_LIMIT_MAX_ATTEMPTS = int(os.environ.get("LOGIN_RATE_LIMIT_MAX_ATTEMPTS", "8"))
+LOGIN_RATE_LIMIT_BLOCK_SECONDS = int(os.environ.get("LOGIN_RATE_LIMIT_BLOCK_SECONDS", "600"))
+_login_attempts: dict[str, dict[str, float | int]] = {}
+_login_attempts_lock = threading.Lock()
 
 # ── Lifespan ──────────────────────────────────────────────
 @asynccontextmanager
@@ -51,8 +64,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AgentHub", version="1.0.0", lifespan=lifespan)
 
-# H4 fix: allow_origins=["*"] 不能搭配 allow_credentials=True（瀏覽器會拒絕）
-# 本 app 用 Authorization header 傳 JWT，不依賴 cookie，不需要 credentials=True
+# 使用同源靜態頁，跨網域如需 cookie 請改用明確 allow_origins 設定
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -67,38 +79,134 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # ── Auth helpers ──────────────────────────────────────────
-bearer_scheme = HTTPBearer()
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def get_current_user(creds: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+def _set_auth_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite=AUTH_COOKIE_SAMESITE,
+        max_age=AUTH_COOKIE_MAX_AGE,
+        path="/",
+    )
+
+
+def _clear_auth_cookie(response: Response) -> None:
+    response.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
+
+
+def _auth_token_from_request(
+    request: Request,
+    creds: HTTPAuthorizationCredentials | None = None,
+) -> str | None:
+    if creds and creds.credentials:
+        return creds.credentials
+    token = request.cookies.get(AUTH_COOKIE_NAME)
+    if token:
+        return token
+    return None
+
+
+def _decode_and_load_user(token: str) -> dict:
     try:
-        payload = decode_token(creds.credentials)
+        payload = decode_token(token)
         sub = payload.get("sub")
         if sub is None:
             raise HTTPException(status_code=401, detail="Invalid token")
         user_id = int(sub)
+        token_version = int(payload.get("tv", 0))
     except (JWTError, ValueError, TypeError):
         raise HTTPException(status_code=401, detail="Invalid token")
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=401, detail="User not found")
-    return dict(row)
+    user = dict(row)
+    if int(user.get("token_version", 0)) != token_version:
+        raise HTTPException(status_code=401, detail="Token revoked")
+    return user
 
 
-def get_optional_user(authorization: str | None = Header(default=None)) -> dict | None:
+def _create_user_token(user_id: int, token_version: int = 0) -> str:
+    return create_access_token({"sub": str(user_id), "tv": int(token_version)})
+
+
+def _auth_rate_keys(request: Request, identifier: str) -> list[str]:
+    ip = request.client.host if request.client else "unknown"
+    ident = (identifier or "").strip().lower() or "_"
+    return [f"ip:{ip}", f"acct:{ip}:{ident}"]
+
+
+def _enforce_login_rate_limit(request: Request, identifier: str) -> None:
+    now = time.time()
+    with _login_attempts_lock:
+        for key in _auth_rate_keys(request, identifier):
+            rec = _login_attempts.get(key)
+            if not rec:
+                continue
+            blocked_until = float(rec.get("blocked_until", 0))
+            if blocked_until > now:
+                retry_after = max(1, int(blocked_until - now))
+                raise HTTPException(
+                    status_code=429,
+                    detail="Too many login attempts. Please try again later.",
+                    headers={"Retry-After": str(retry_after)},
+                )
+            window_start = float(rec.get("window_start", now))
+            if now - window_start > LOGIN_RATE_LIMIT_WINDOW_SECONDS:
+                _login_attempts.pop(key, None)
+
+
+def _record_login_failure(request: Request, identifier: str) -> None:
+    now = time.time()
+    with _login_attempts_lock:
+        for key in _auth_rate_keys(request, identifier):
+            rec = _login_attempts.get(key)
+            if not rec or now - float(rec.get("window_start", now)) > LOGIN_RATE_LIMIT_WINDOW_SECONDS:
+                _login_attempts[key] = {"count": 1, "window_start": now, "blocked_until": 0}
+                continue
+            rec["count"] = int(rec.get("count", 0)) + 1
+            if int(rec["count"]) >= LOGIN_RATE_LIMIT_MAX_ATTEMPTS:
+                rec["blocked_until"] = now + LOGIN_RATE_LIMIT_BLOCK_SECONDS
+            _login_attempts[key] = rec
+
+
+def _record_login_success(request: Request, identifier: str) -> None:
+    with _login_attempts_lock:
+        for key in _auth_rate_keys(request, identifier):
+            _login_attempts.pop(key, None)
+
+
+def get_current_user(
+    request: Request,
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+):
+    token = _auth_token_from_request(request, creds)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return _decode_and_load_user(token)
+
+
+def get_optional_user(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    x_anon_session: str | None = Header(default=None, alias="X-Anon-Session"),
+) -> dict | None:
     """Same as get_current_user but returns None instead of raising when no/invalid token."""
-    if not authorization or not authorization.lower().startswith("bearer "):
+    token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+    elif not x_anon_session:
+        token = request.cookies.get(AUTH_COOKIE_NAME)
+    if not token:
         return None
-    token = authorization.split(" ", 1)[1].strip()
     try:
-        payload = decode_token(token)
-        user_id = int(payload.get("sub"))
-    except (JWTError, ValueError, TypeError):
+        return _decode_and_load_user(token)
+    except HTTPException:
         return None
-    with get_conn() as conn:
-        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    return dict(row) if row else None
 
 
 def _resolve_identity(user: dict | None, anon_session: str | None) -> tuple[int | None, str | None]:
@@ -196,7 +304,7 @@ def _agent_out(row: dict, base_url_root: str) -> AgentOut:
 
 # ── Auth routes ───────────────────────────────────────────
 @app.post("/auth/register", response_model=TokenResponse, status_code=201)
-def register(req: RegisterRequest):
+def register(req: RegisterRequest, response: Response):
     hashed = hash_password(req.password)
     try:
         with get_conn() as conn:
@@ -207,20 +315,26 @@ def register(req: RegisterRequest):
             user_id = cur.lastrowid
     except Exception:
         raise HTTPException(status_code=409, detail="Username or email already exists")
-    token = create_access_token({"sub": str(user_id)})
+    token = _create_user_token(user_id, token_version=0)
+    _set_auth_cookie(response, token)
     return TokenResponse(access_token=token)
 
 
 @app.post("/auth/login", response_model=TokenResponse)
-def login(req: LoginRequest):
+def login(req: LoginRequest, request: Request, response: Response):
+    _enforce_login_rate_limit(request, req.email)
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM users WHERE email = ?", (req.email,)).fetchone()
     # M1 fix: Google-only 帳號的 hashed_pw 是 "GOOGLE_OAUTH"，不能用 bcrypt 驗證
     if not row or row["hashed_pw"] == "GOOGLE_OAUTH":
+        _record_login_failure(request, req.email)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not verify_password(req.password, row["hashed_pw"]):
+        _record_login_failure(request, req.email)
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = create_access_token({"sub": str(row["id"])})
+    token = _create_user_token(row["id"], token_version=row["token_version"] or 0)
+    _record_login_success(request, req.email)
+    _set_auth_cookie(response, token)
     return TokenResponse(access_token=token)
 
 
@@ -235,8 +349,9 @@ def auth_config():
 
 
 @app.post("/auth/google", response_model=TokenResponse)
-async def google_auth(req: GoogleAuthRequest):
+async def google_auth(req: GoogleAuthRequest, request: Request, response: Response):
     import httpx
+    _enforce_login_rate_limit(request, "google")
     async with httpx.AsyncClient() as client:
         r = await client.get(
             "https://oauth2.googleapis.com/tokeninfo",
@@ -244,11 +359,14 @@ async def google_auth(req: GoogleAuthRequest):
             timeout=10.0,
         )
     if r.status_code != 200:
+        _record_login_failure(request, "google")
         raise HTTPException(status_code=401, detail="Google token 驗證失敗")
     info = r.json()
     if info.get("aud") != GOOGLE_CLIENT_ID:
+        _record_login_failure(request, "google")
         raise HTTPException(status_code=401, detail="Token audience 不符")
     if info.get("email_verified") not in ("true", True):
+        _record_login_failure(request, "google")
         raise HTTPException(status_code=401, detail="Email 尚未驗證")
 
     google_id = info["sub"]
@@ -275,7 +393,20 @@ async def google_auth(req: GoogleAuthRequest):
                 row = conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
         user_id = row["id"]
 
-    return TokenResponse(access_token=create_access_token({"sub": str(user_id)}))
+    token = _create_user_token(user_id, token_version=row["token_version"] or 0)
+    _record_login_success(request, "google")
+    _set_auth_cookie(response, token)
+    return TokenResponse(access_token=token)
+
+
+@app.post("/auth/logout", status_code=204)
+def logout(response: Response, user=Depends(get_current_user)):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET token_version = token_version + 1 WHERE id = ?",
+            (user["id"],),
+        )
+    _clear_auth_cookie(response)
 
 
 # ── Agent CRUD ────────────────────────────────────────────
@@ -283,6 +414,10 @@ async def google_auth(req: GoogleAuthRequest):
 def create_agent(req: AgentCreate, request_obj=None, user=Depends(get_current_user)):
     from fastapi import Request
     slug = generate_slug()
+    try:
+        encrypted_llm_api_key = encrypt_llm_api_key(req.llm_api_key)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     with get_conn() as conn:
         # ensure slug uniqueness
         while conn.execute("SELECT 1 FROM agents WHERE slug=?", (slug,)).fetchone():
@@ -297,7 +432,7 @@ def create_agent(req: AgentCreate, request_obj=None, user=Depends(get_current_us
             (
                 user["id"], slug, req.name, req.description, req.avatar,
                 req.system_prompt, req.llm_provider, req.llm_model,
-                req.llm_base_url, req.llm_api_key,
+                req.llm_base_url, encrypted_llm_api_key,
                 req.temperature, req.max_tokens, int(req.is_public),
                 req.welcome_message or "",
                 _json.dumps(req.suggested_prompts or [], ensure_ascii=False),
@@ -335,6 +470,14 @@ def update_agent(agent_id: int, req: AgentUpdate, user=Depends(get_current_user)
         if not row:
             raise HTTPException(status_code=404, detail="Agent not found")
         updates = req.model_dump(exclude_none=True)
+        if "llm_api_key" in updates:
+            if not (updates.get("llm_api_key") or "").strip():
+                updates.pop("llm_api_key", None)
+            else:
+                try:
+                    updates["llm_api_key"] = encrypt_llm_api_key(updates["llm_api_key"])
+                except RuntimeError as e:
+                    raise HTTPException(status_code=500, detail=str(e))
         if not updates:
             return _agent_out(dict(row), "")
         # serialize list/dict fields to JSON string for SQLite
@@ -412,6 +555,10 @@ async def chat(
     if not row:
         raise HTTPException(status_code=404, detail="Agent not found or not public")
     agent = dict(row)
+    try:
+        runtime_api_key = decrypt_llm_api_key(agent.get("llm_api_key"))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
     # 只取最新 CONTEXT_WINDOW_DIALOGS 則
     messages = [{"role": m.role, "content": m.content} for m in req.messages][-CONTEXT_WINDOW_DIALOGS:]
@@ -500,7 +647,7 @@ async def chat(
                 provider=agent["llm_provider"],
                 model=agent["llm_model"],
                 base_url=agent["llm_base_url"],
-                api_key=agent["llm_api_key"],
+                api_key=runtime_api_key,
                 system_prompt=system_prompt,
                 messages=messages,
                 temperature=agent["temperature"],
@@ -545,7 +692,7 @@ async def chat(
             provider=agent["llm_provider"],
             model=agent["llm_model"],
             base_url=agent["llm_base_url"],
-            api_key=agent["llm_api_key"],
+            api_key=runtime_api_key,
         )
 
         # ── 短期記憶：每 SESSION_MEMORY_INTERVAL 則更新 working memory ──────
@@ -881,6 +1028,10 @@ async def compile_kb(req: KBCompileRequest, user=Depends(get_current_user)):
             ).fetchall()
 
     agent = dict(agent)
+    try:
+        runtime_api_key = decrypt_llm_api_key(agent.get("llm_api_key"))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     compiled_ids: list[int] = []
     for doc in docs:
         result = await compile_document(
@@ -889,7 +1040,7 @@ async def compile_kb(req: KBCompileRequest, user=Depends(get_current_user)):
             provider=agent["llm_provider"],
             model=agent["llm_model"],
             base_url=agent["llm_base_url"],
-            api_key=agent["llm_api_key"],
+            api_key=runtime_api_key,
         )
         if result:
             compiled_ids.append(doc["id"])

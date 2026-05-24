@@ -13,6 +13,7 @@ def init_db():
                 username  TEXT UNIQUE NOT NULL,
                 email     TEXT UNIQUE NOT NULL,
                 hashed_pw TEXT NOT NULL,
+                token_version INTEGER NOT NULL DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -162,6 +163,10 @@ def init_db():
         # 加 google_id 欄位（舊 DB 相容，已存在就跳過）
         try:
             conn.execute("ALTER TABLE users ADD COLUMN google_id TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0")
         except Exception:
             pass
 

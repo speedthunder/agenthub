@@ -150,6 +150,13 @@ docker run -p 8000:8000 agenthub
 | `SESSION_MEMORY_INTERVAL` | `2` | 每幾則訊息更新一次短期記憶（2 = 每輪） |
 | `PERSONA_UPDATE_INTERVAL` | `2` | 每幾則訊息萃取一次長期 facts（2 = 每輪） |
 | `KB_COMPILE_INTERVAL` | `10` | 每幾則訊息把對話編譯進 KB（10 = 每 5 輪） |
+| `APP_SECRET_KEY` | _(必填於使用 llm_api_key 時)_ | 伺服器端主密鑰，用於加密儲存 `llm_api_key` |
+| `AUTH_COOKIE_NAME` | `agenthub_session` | JWT Cookie 名稱 |
+| `AUTH_COOKIE_SECURE` | `false` | Cookie 是否僅允許 HTTPS（正式環境建議 `true`） |
+| `AUTH_COOKIE_SAMESITE` | `lax` | Cookie SameSite 設定（`lax`/`strict`/`none`） |
+| `LOGIN_RATE_LIMIT_WINDOW_SECONDS` | `300` | 登入防爆破視窗秒數 |
+| `LOGIN_RATE_LIMIT_MAX_ATTEMPTS` | `8` | 單一視窗內最大失敗登入次數 |
+| `LOGIN_RATE_LIMIT_BLOCK_SECONDS` | `600` | 超過次數後封鎖秒數 |
 
 ---
 
@@ -173,8 +180,18 @@ docker run -p 8000:8000 agenthub
 ```
 POST /auth/register
 POST /auth/login
+POST /auth/logout
 GET  /auth/me
 ```
+
+> 認證改為以 HttpOnly Cookie 維持登入狀態，前端不再保存 JWT 到 localStorage。
+
+### `llm_api_key` 加密與舊資料相容策略
+
+- `llm_api_key` 目前採 **server-side 加密儲存**（`enc:v1:` 前綴）
+- 若 DB 內有舊版明文值，讀取時仍可相容使用
+- 舊值會在下一次更新 Agent（重新輸入 API key）時轉為加密格式
+- `AgentOut` 與相關 API 不會回傳 `llm_api_key`
 
 ### Agent
 ```

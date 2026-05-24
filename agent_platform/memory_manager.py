@@ -16,6 +16,7 @@ import re
 import httpx
 
 from .database import get_conn
+from .security_utils import validate_llm_base_url
 
 # ── Prompt ────────────────────────────────────────────────────────────────────
 
@@ -62,6 +63,7 @@ async def extract_session_memory(
     ]
 
     try:
+        validate_llm_base_url(base_url)
         if provider == "ollama":
             raw = await _ollama(base_url, model, messages)
         elif provider in ("openai", "azure"):
