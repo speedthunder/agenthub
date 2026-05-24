@@ -6,7 +6,7 @@ from typing import Optional, List
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=40)
     email: EmailStr
-    password: str = Field(..., min_length=6)
+    password: str = Field(..., min_length=8)  # L2 fix: 最低 8 字元
 
 
 class LoginRequest(BaseModel):

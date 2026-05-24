@@ -51,10 +51,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AgentHub", version="1.0.0", lifespan=lifespan)
 
+# H4 fix: allow_origins=["*"] 不能搭配 allow_credentials=True（瀏覽器會拒絕）
+# 本 app 用 Authorization header 傳 JWT，不依賴 cookie，不需要 credentials=True
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -213,7 +215,10 @@ def register(req: RegisterRequest):
 def login(req: LoginRequest):
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM users WHERE email = ?", (req.email,)).fetchone()
-    if not row or not verify_password(req.password, row["hashed_pw"]):
+    # M1 fix: Google-only 帳號的 hashed_pw 是 "GOOGLE_OAUTH"，不能用 bcrypt 驗證
+    if not row or row["hashed_pw"] == "GOOGLE_OAUTH":
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not verify_password(req.password, row["hashed_pw"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_access_token({"sub": str(row["id"])})
     return TokenResponse(access_token=token)
@@ -358,12 +363,15 @@ def delete_agent(agent_id: int, user=Depends(get_current_user)):
 @app.get("/share/{slug}", response_class=HTMLResponse)
 def share_page(slug: str):
     """回傳分享頁 HTML，嵌入 slug 後由前端 JS 處理。"""
+    import re as _re
+    # H1 fix: 只允許 generate_slug() 產生的合法字元，防止反射型 XSS
+    if not _re.fullmatch(r"[a-z0-9\-]{1,80}", slug):
+        raise HTTPException(status_code=404, detail="Agent not found")
     html_path = os.path.join(STATIC_DIR, "chat.html")
     if not os.path.exists(html_path):
         raise HTTPException(status_code=500, detail="UI not built")
     with open(html_path, encoding="utf-8") as f:
         content = f.read()
-    # 注入 slug 讓 JS 知道要呼叫哪個 agent
     content = content.replace("__AGENT_SLUG__", slug)
     return HTMLResponse(content=content)
 
@@ -407,11 +415,6 @@ async def chat(
 
     # 只取最新 CONTEXT_WINDOW_DIALOGS 則
     messages = [{"role": m.role, "content": m.content} for m in req.messages][-CONTEXT_WINDOW_DIALOGS:]
-    # Debug: 印出收到的歷史對話紀錄
-    import sys
-    print("[DEBUG] Received messages:", file=sys.stderr)
-    for idx, msg in enumerate(messages):
-        print(f"  {idx+1}. role={msg['role']} content={msg['content']}", file=sys.stderr)
 
     # ── 持久化:解析身份並建立/取得 conversation ───────────────
     user_id, anon_session_id = _resolve_identity(user, x_anon_session)
@@ -506,7 +509,6 @@ async def chat(
                 assistant_buf.append(chunk)
                 yield f"data: {chunk}\n\n"
         except Exception as e:
-            print("[DEBUG] stream_chat error:", e)
             yield f"data: [ERROR] {str(e)}\n\n"
         yield "data: [DONE]\n\n"
 
@@ -775,6 +777,9 @@ async def upload_image(
 ):
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=400, detail=f"不支援的圖片格式：{file.content_type}")
+    # M4 fix: 先用 Content-Length header 快速拒絕，避免整個大檔案被讀入記憶體
+    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="圖片不可超過 10 MB")
     data = await file.read()
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=400, detail="圖片不可超過 10 MB")

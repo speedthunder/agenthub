@@ -325,9 +325,14 @@ def load_kb_for_prompt(user_id: int, limit: int = 5) -> str:
 
 # ── Search ────────────────────────────────────────────────────────────────────
 
+def _like_escape(s: str) -> str:
+    """M3 fix: 跳脫 LIKE 特殊字元，防止萬用字元注入。"""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def search_kb(user_id: int, query: str, limit: int = 10) -> dict:
     """Keyword search across summaries and concepts."""
-    q = f"%{query}%"
+    q = f"%{_like_escape(query)}%"
     with get_conn() as conn:
         summaries = conn.execute(
             """SELECT id, title, core_conclusions, tags, created_at FROM kb_summaries

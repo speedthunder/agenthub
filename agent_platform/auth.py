@@ -7,7 +7,11 @@ from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
 
-SECRET_KEY = os.environ.get("JWT_SECRET", "change-this-secret-in-production")
+SECRET_KEY = os.environ.get("JWT_SECRET")
+if not SECRET_KEY:
+    import secrets as _secrets
+    # L1 fix: 未設定 JWT_SECRET 時自動產生隨機密鑰（重啟後既有 token 失效，應設定環境變數）
+    SECRET_KEY = _secrets.token_hex(32)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 

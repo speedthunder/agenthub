@@ -1,6 +1,24 @@
 """LLM 呼叫橋接層：支援 ollama / openai / azure"""
 import httpx
+import re
 from typing import AsyncGenerator
+from urllib.parse import urlparse
+
+# H3 fix: SSRF 防護 — 禁止指向內網的 base_url
+_BLOCKED_HOSTS = re.compile(
+    r"^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.)",
+    re.I,
+)
+
+
+def _validate_base_url(url: str) -> None:
+    """驗證 LLM base_url 是否安全；不安全則拋出 ValueError。"""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Unsupported URL scheme: {parsed.scheme!r}")
+    host = parsed.hostname or ""
+    if _BLOCKED_HOSTS.match(host):
+        raise ValueError(f"Blocked internal host: {host}")
 
 
 async def stream_chat(
@@ -15,11 +33,12 @@ async def stream_chat(
 ) -> AsyncGenerator[str, None]:
 
     all_messages = [{"role": "system", "content": system_prompt}] + messages
-    # Debug: 印出傳給 LLM 的所有訊息
-    import sys
-    print("[DEBUG] LLM all_messages:", file=sys.stderr)
-    for idx, msg in enumerate(all_messages):
-        print(f"  {idx+1}. role={msg['role']} content={msg['content']}", file=sys.stderr)
+
+    try:
+        _validate_base_url(base_url)
+    except ValueError as e:
+        yield f"[Configuration error: {e}]"
+        return
 
     if provider == "ollama":
         async for chunk in _ollama_stream(base_url, model, all_messages, temperature, max_tokens):
