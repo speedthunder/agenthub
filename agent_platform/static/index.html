@@ -94,6 +94,10 @@
       <div class="form-group"><label>密碼</label><input id="reg-pw" type="password" placeholder="••••••"></div>
       <button class="btn btn-primary" style="width:100%" onclick="doRegister()">建立帳號</button>
     </div>
+    <div style="display:flex;align-items:center;margin:18px 0 12px;gap:8px;font-size:.82rem;color:var(--muted)">
+      <hr style="flex:1;border:none;border-top:1px solid var(--border)"><span>或</span><hr style="flex:1;border:none;border-top:1px solid var(--border)">
+    </div>
+    <div id="google-btn" style="display:flex;justify-content:center;min-height:44px"></div>
   </div>
 </div>
 
@@ -210,6 +214,36 @@ async function init() {
 function showAuth() {
   document.getElementById('auth-page').style.display = '';
   document.getElementById('app').style.display = 'none';
+  initGoogleSignIn();
+}
+
+async function initGoogleSignIn() {
+  try {
+    const res = await fetch(BASE + '/auth/config');
+    const {google_client_id} = await res.json();
+    if (!google_client_id) return;
+    let attempts = 0;
+    while (!window.google?.accounts && attempts < 30) {
+      await new Promise(r => setTimeout(r, 100));
+      attempts++;
+    }
+    if (!window.google?.accounts) return;
+    google.accounts.id.initialize({
+      client_id: google_client_id,
+      callback: async (resp) => {
+        try {
+          const r = await api('POST', '/auth/google', {credential: resp.credential});
+          token = r.access_token;
+          localStorage.setItem('agenthub_token', token);
+          init();
+        } catch(e) { toast('Google 登入失敗：' + (e.detail || e.message || ''), true); }
+      }
+    });
+    google.accounts.id.renderButton(
+      document.getElementById('google-btn'),
+      {theme: 'outline', size: 'large', text: 'signin_with', locale: 'zh_TW', width: 300}
+    );
+  } catch(e) { console.error('Google Sign-In init failed', e); }
 }
 function showApp() {
   document.getElementById('auth-page').style.display = 'none';
@@ -522,5 +556,6 @@ function toast(msg, err=false) {
 
 init();
 </script>
+<script src="https://accounts.google.com/gsi/client" async></script>
 </body>
 </html>

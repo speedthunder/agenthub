@@ -159,6 +159,11 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_kb_concepts_user
                 ON kb_concepts(user_id);
         """)
+        # 加 google_id 欄位（舊 DB 相容，已存在就跳過）
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN google_id TEXT")
+        except Exception:
+            pass
 
 
 @contextmanager

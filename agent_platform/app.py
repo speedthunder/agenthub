@@ -20,7 +20,7 @@ from .auth import (
     create_access_token, decode_token, generate_slug,
 )
 from .schemas import (
-    RegisterRequest, LoginRequest, TokenResponse, UserOut,
+    RegisterRequest, LoginRequest, TokenResponse, GoogleAuthRequest, UserOut,
     AgentCreate, AgentUpdate, AgentOut,
     ChatRequest, ConversationOut, MessageOut,
     ProfileOut, ProfileUpdate, FactOut,
@@ -40,6 +40,8 @@ from .memory_manager import (
     load_session_memory, build_session_memory_block,
 )
 from .config import CONTEXT_WINDOW_DIALOGS, PERSONA_UPDATE_INTERVAL, SESSION_MEMORY_INTERVAL, KB_COMPILE_INTERVAL
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 
 # ── Lifespan ──────────────────────────────────────────────
 @asynccontextmanager
@@ -220,6 +222,55 @@ def login(req: LoginRequest):
 @app.get("/auth/me", response_model=UserOut)
 def me(user=Depends(get_current_user)):
     return UserOut(**{k: user[k] for k in ("id", "username", "email")})
+
+
+@app.get("/auth/config")
+def auth_config():
+    return {"google_client_id": GOOGLE_CLIENT_ID}
+
+
+@app.post("/auth/google", response_model=TokenResponse)
+async def google_auth(req: GoogleAuthRequest):
+    import httpx
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            "https://oauth2.googleapis.com/tokeninfo",
+            params={"id_token": req.credential},
+            timeout=10.0,
+        )
+    if r.status_code != 200:
+        raise HTTPException(status_code=401, detail="Google token 驗證失敗")
+    info = r.json()
+    if info.get("aud") != GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=401, detail="Token audience 不符")
+    if info.get("email_verified") not in ("true", True):
+        raise HTTPException(status_code=401, detail="Email 尚未驗證")
+
+    google_id = info["sub"]
+    email = info["email"]
+    name = info.get("name", email.split("@")[0])
+
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM users WHERE google_id = ?", (google_id,)).fetchone()
+        if not row:
+            row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+            if row:
+                conn.execute("UPDATE users SET google_id = ? WHERE id = ?", (google_id, row["id"]))
+            else:
+                username = name.replace(" ", "_")[:40]
+                base = username
+                i = 1
+                while conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone():
+                    username = f"{base}_{i}"
+                    i += 1
+                cur = conn.execute(
+                    "INSERT INTO users (username, email, hashed_pw, google_id) VALUES (?,?,?,?)",
+                    (username, email, "GOOGLE_OAUTH", google_id),
+                )
+                row = conn.execute("SELECT * FROM users WHERE id = ?", (cur.lastrowid,)).fetchone()
+        user_id = row["id"]
+
+    return TokenResponse(access_token=create_access_token({"sub": str(user_id)}))
 
 
 # ── Agent CRUD ────────────────────────────────────────────

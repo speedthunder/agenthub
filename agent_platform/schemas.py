@@ -19,6 +19,10 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class GoogleAuthRequest(BaseModel):
+    credential: str
+
+
 class UserOut(BaseModel):
     id: int
     username: str

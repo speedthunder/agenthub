@@ -83,6 +83,10 @@
       <input id="rg-pw" type="password">
       <div class="toolbar"><span></span><button onclick="doRegister()">註冊</button></div>
     </div>
+    <div style="display:flex;align-items:center;margin:16px 0 10px;gap:8px;font-size:.82rem;color:var(--muted)">
+      <hr style="flex:1;border:none;border-top:1px solid var(--border)"><span>或</span><hr style="flex:1;border:none;border-top:1px solid var(--border)">
+    </div>
+    <div id="google-btn" style="display:flex;justify-content:center;min-height:44px"></div>
   </div>
 
   <!-- 已登入:profile 表單 -->
@@ -204,11 +208,42 @@ async function afterLogin(){
   await loadProfile();
 }
 
+async function initGoogleSignIn(){
+  try{
+    const res=await fetch('/agenthub/auth/config');
+    const {google_client_id}=await res.json();
+    if(!google_client_id)return;
+    let attempts=0;
+    while(!window.google?.accounts&&attempts<30){
+      await new Promise(r=>setTimeout(r,100));
+      attempts++;
+    }
+    if(!window.google?.accounts)return;
+    google.accounts.id.initialize({
+      client_id:google_client_id,
+      callback:async(resp)=>{
+        try{
+          const r=await fetch('/agenthub/auth/google',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({credential:resp.credential})});
+          if(!r.ok)throw new Error((await r.json()).detail||'Google 登入失敗');
+          const data=await r.json();
+          setAuth(data.access_token);
+          await afterLogin();
+        }catch(e){showMsg(e.message,'err')}
+      }
+    });
+    google.accounts.id.renderButton(
+      document.getElementById('google-btn'),
+      {theme:'outline',size:'large',text:'signin_with',locale:'zh_TW',width:300}
+    );
+  }catch(e){console.error('Google Sign-In init failed',e)}
+}
+
 async function loadProfile(){
   if(!getJwt()){
     document.getElementById('auth-card').style.display='';
     document.getElementById('profile-card').style.display='none';
     document.getElementById('auth-status').innerHTML='未登入';
+    initGoogleSignIn();
     return;
   }
   document.getElementById('auth-card').style.display='none';
@@ -269,5 +304,6 @@ async function clearProfile(){
 
 loadProfile();
 </script>
+<script src="https://accounts.google.com/gsi/client" async></script>
 </body>
 </html>
