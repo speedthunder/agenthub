@@ -23,6 +23,13 @@ agents.db
 # 環境變數
 .env
 .env.*
+!.env.example
+
+# 金鑰備忘文件
+*key*.txt
+*secret*.txt
+*token*.txt
+*oauth*.txt
 
 # 上傳的媒體檔案
 agent_platform/static/uploads/
